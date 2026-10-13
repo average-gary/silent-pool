@@ -2,23 +2,23 @@
 
 A Stratum V2 mining pool that pays miners to **BIP 352 silent-payment addresses**: one-time, unlinkable P2TR outputs **directly in the coinbase** for earnings above a threshold, and **Ark (bark) out-of-round payments** below it. Accounting is **SLICE / PPLNS-JD**, so miners build their own block templates via Job Declaration and are paid for both hashrate and the fees they selected.
 
-**Status: design phase.** No code yet. The technical specification and roadmap are in `docs/`; the research behind them lives in a separate knowledge base (see *Provenance*).
+**Status: design phase.** No pool code yet; the Ark-tier derivation, mailbox and client are prototyped and validated on regtest (`spc_ark/`, `spc_ark_mailbox/`, `spc_ark_client/`, see `RESULTS.md`). The technical specification and roadmap are in `docs/`; the research behind them lives in a separate knowledge base (see *Provenance*).
 
 ## The two ideas
 
-1. **SPc — silent payments in the coinbase.** BIP 352 cannot be used in a coinbase because the input has no public key. SPc supplies one: a per-height ephemeral key `A_send`, published in the coinbase itself (scriptSig pool tag in pool-template mode, `OP_RETURN` under Job Declaration), with the BIP 34 block height as the nonce. Each miner's output is `P = B_spend + H(ecdh ‖ 0)·G`; a wallet finds it from the block header, the coinbase, and its scan key. The pool erases `a_send` once the coinbase is built. Public write-up: [delvingbitcoin t/2833](https://delvingbitcoin.org/t/silent-payments-coinbase/2833).
-2. **A sub-threshold rail that is not the pool's own ledger.** Earnings under the coinbase threshold are paid once per block over Ark from a pool-held bark wallet on a **third-party** Ark server — deliberately not one the pool runs, because arkoor's only security assumption is "sender or server honest."
+1. **SPc — silent payments in the coinbase.** BIP 352 cannot be used in a coinbase because the input has no public key. SPc supplies one: a per-height ephemeral key `A_send`, published in the coinbase itself (scriptSig pool tag in pool-template mode, `OP_RETURN` under Job Declaration), with the BIP 34 block height as the nonce. Each miner's output is `P = B_spend + hash_SPc/TierSpc(ecdh ‖ 0)·G`; a wallet finds it from the block header, the coinbase, and its scan key. The pool erases `a_send` once the coinbase is built. Public write-up: [delvingbitcoin t/2833](https://delvingbitcoin.org/t/silent-payments-coinbase/2833).
+2. **A sub-threshold rail that is not the pool's own ledger.** Earnings under the coinbase threshold are paid to a per-block Ark key derived from the same ECDH, once the block has 6 confirmations, from the pool's Ark float on a **third-party** Ark server — deliberately not one the pool runs, because arkoor's only security assumption is "sender or server honest." The block's single pool output (a fresh P2TR under the pool's hot Ark key) refills the float when it matures. Miners who don't register Ark delivery forfeit their below-threshold earnings to the pool.
 
 ## Components (planned)
 
 | Binary | Role |
 |---|---|
-| `spc-pool` | SV2 pool; roles `front` / `payout` / `api`; SLICE accounting; SPc coinbase; Ark settlement |
+| `spc-pool` | SV2 pool; roles `front` / `payout` / `api` / `ark`; SLICE accounting; SPc coinbase; Ark settlement |
 | `spc-jds` | Job Declarator Server implementing sv2-spec PR #203 (`0x0003` Coinbase Transaction Payouts) |
 | `spc-agent` | Miner-side: SV1/SV2 translator + JDC + payout verifier + Ark wallet, one binary, one seed |
 | `spc-scan` | Reference scanner / wallet helper for SPc outputs |
 
-Miner identity is the silent-payment address, full stop. Anything the Ark leg needs travels in a small project-defined SV2 extension.
+Miner identity is the silent-payment address, full stop: it is the only thing that keys a miner's account, and both payout tiers are derived from it per block. Separately, a miner MAY register a private **delivery capability** for the Ark tier (`B_ark` plus mailbox blinding data, signed with the scan key) over a small project-defined SV2 extension; it changes where the miner can be paid, never who they are, and is never published.
 
 ## Documents
 

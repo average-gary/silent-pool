@@ -42,9 +42,13 @@ miner's accrued balance clears the coinbase dust threshold:
 
 - **Above threshold** -> SPc output directly in the coinbase. Trustless,
   non-custodial, spendable after the 100-block coinbase maturity.
-- **Below threshold** -> balance accrues off-chain; once the pool's own
-  coinbase proceeds are mature, the pool boards into Ark and arkoors the
-  miner. Custodial during the wait; no on-chain footprint for the miner.
+- **Below threshold** -> once the block has 6 confirmations, the pool arkoors
+  the miner from its own Ark float. The block's single pool output (a fresh
+  P2TR under the pool's hot Ark key) carries those sats, and when it matures
+  the pool boards only what the float needs to refill it. Custodial for the
+  confirmation window; no on-chain footprint for the miner. A miner who has
+  not registered Ark delivery forfeits earnings below the threshold to the
+  pool (spec §11.1).
 
 The crux: the Ark-side destination is **derived from the same per-block ECDH**
 the pool already runs for SPc — not bundled with the SP address. See below.
@@ -178,7 +182,7 @@ one mailbox per pool block.
   post one publicly.
 - **The Ark server.** Sees arkoor destination pubkeys, amounts, timing, and
   any boards. It can also parse public coinbases. This is the subtle one:
-  bursts of pool-originated arkoors ~100 blocks after each pool block are
+  bursts of pool-originated arkoors ~6 blocks after each pool block are
   fingerprintable, and amounts map to the pool's known payout distribution.
   If an SPc-tier miner later boards their on-chain payout into Ark, the server
   sees the funding UTXO, linking that SPc output to their Ark identity.
@@ -218,6 +222,13 @@ discovery").
 - Wallet UX for tier migration: miner sees a single balance spanning pending
   off-chain accrual, immature coinbase outputs, and VTXOs.
 - Light-client story for scanning both tiers without a full node.
+- Covenants (CTV / BIP 119 or similar; needs a soft fork). These would
+  greatly improve the Ark tier by removing interactivity: the coinbase could
+  commit sub-threshold payouts to a tree of `U_i` leaves that each miner can
+  exit unilaterally, with no Ark server cosigning and no pool float. All
+  pool payouts could likewise be compressed into one coinbase output
+  committing to a payout tree, which lifts the coinbase weight and dust limits
+  and keeps per-miner amounts off-chain until a leaf is expanded. Spec O19.
 
 ## References
 

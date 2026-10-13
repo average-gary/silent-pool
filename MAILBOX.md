@@ -105,13 +105,13 @@ mailboxes.
 The final index is hardened, so the pool can't derive `M_i` itself. The miner
 has two ways to supply it:
 
-- **After the find (default).** The wallet sees pool block `i` while scanning,
-  then registers `M_i`. The pool can't board block `i`'s proceeds before
-  coinbase maturity, so the miner has about 100 blocks (about 16 h) to do
-  this.
-- **Pre-registration window.** Register `M_h` for every height in an upcoming
+- **Pre-registration window (default).** Register `M_h` for every height in an upcoming
   range. This costs about 144 × 37 B ≈ 5.3 KB per day of coverage. Heights
   the pool never finds are simply unused.
+- **After the find.** The wallet sees pool block `i` while scanning, then
+  registers `M_i`. The pool pays at `i + 6` (6 confirmations, spec §11.3), so
+  this leaves only about 6 blocks (about 1 h); use it as a catch-up path, not
+  the primary one.
 
 If the pool has no `M_i` when it pays epoch `i`, it falls back to the static
 `M` (that payout is then linkable, as in DESIGN.md) or holds the payout,
@@ -143,8 +143,9 @@ Rejected: `M_i = U_i`. Authorizing reads would then need a signature from
 ## 3. On-demand read
 
 **Trigger.** The wallet sees pool block `i` while scanning the chain. The
-payout can arrive no earlier than `i + 100`. The wallet reads `M_i` at
-`i + 100 + RETRY_OFFSETS[r]` blocks, with `RETRY_OFFSETS = [0, 6, 36, 144,
+payout can arrive no earlier than `i + 6` (the pool pays from its float at
+6 confirmations, spec §11.3). The wallet reads `M_i` at
+`i + 6 + RETRY_OFFSETS[r]` blocks, with `RETRY_OFFSETS = [0, 6, 36, 144,
 1008]`, until the epoch closes. If the pool provides a "paid epoch `i`"
 notification (API or webhook), the wallet reads once on that notification
 instead of following the schedule.
@@ -192,7 +193,7 @@ on-chain, so there's nothing to read), or when the last retry is used up.
 
 **Startup** (`catch_up_epochs`): scan coinbases in `(last_synced, tip]` for
 pool blocks. This scan is already needed for SPc. Read every epoch that is
-mature (`e + 100 <= tip`) and not closed. Epochs still open from earlier
+due (`e + 6 <= tip`) and not closed. Epochs still open from earlier
 runs continue on their retry schedule (`read_due`).
 
 **Recovery from seed:** use the same rule from the wallet's birthday height.
@@ -210,7 +211,7 @@ the pool's hashrate share, so the pool finds about `144·f` blocks per day.
 - Example: a 1% pool means about 1.4 reads/day, or about 525 per year of
   recovery. A 10% pool means about 14 reads/day, or about 5,300 per year.
 - For comparison, subscribing to every open mailbox would mean
-  `f·1108` concurrent streams (about 111 for a 10% pool, one per epoch still
+  `f·1014` concurrent streams (about 101 for a 10% pool, one per epoch still
   inside the retry horizon). The static `M` uses 1 stream.
 
 ## Privacy and cost
@@ -228,7 +229,7 @@ Residual leaks and their mitigations:
 - **Network.** Use a new gRPC connection for each epoch read, with Tor
   stream isolation if possible. Add random jitter after each trigger. During
   catch-up, don't read many `M_i` back-to-back on one connection.
-- **Timing.** Reads cluster around `i + 100 + offsets`. Every miner owed from
+- **Timing.** Reads cluster around `i + 6 + offsets`. Every miner owed from
   block `i` reads in the same window, so the anonymity set is the set of
   miners paid in that epoch. Jitter makes the set larger.
 - The amount and pool-burst fingerprinting described in DESIGN.md is

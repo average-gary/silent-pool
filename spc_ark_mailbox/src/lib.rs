@@ -354,20 +354,22 @@ pub fn read_epoch_mailbox(
 // 4. Catch-up / lookahead scheduling
 // ---------------------------------------------------------------------------
 
-/// Coinbase maturity: the pool can't board pool-block proceeds into Ark
-/// before this.
-pub const COINBASE_MATURITY: u32 = 100;
+/// Payout delay: the pool pays Ark-tier miners from its float once the
+/// pool block has this many confirmations (spec §11.3 `confirmation_depth`).
+/// It does not wait for coinbase maturity; the matured pool output only
+/// refills the float later.
+pub const PAYOUT_DELAY: u32 = 6;
 
-/// Default retry schedule, in blocks after maturity, for epochs that are
-/// still open. One read per entry, so at most `RETRY_OFFSETS.len()` reads per
-/// epoch. The last entry is the give-up horizon.
+/// Default retry schedule, in blocks after the payout delay, for epochs that
+/// are still open. One read per entry, so at most `RETRY_OFFSETS.len()` reads
+/// per epoch. The last entry is the give-up horizon.
 pub const RETRY_OFFSETS: [u32; 5] = [0, 6, 36, 144, 1008];
 
 /// Which retry offsets of `epoch` are due at `tip`, given how many reads
 /// were already made for it. Returns `true` if a read should happen now.
 pub fn read_due(epoch: u32, reads_done: usize, tip: u32) -> bool {
     match RETRY_OFFSETS.get(reads_done) {
-        Some(off) => tip >= epoch.saturating_add(COINBASE_MATURITY).saturating_add(*off),
+        Some(off) => tip >= epoch.saturating_add(PAYOUT_DELAY).saturating_add(*off),
         None => false,
     }
 }
@@ -382,7 +384,7 @@ pub fn catch_up_epochs(pool_blocks: &[u32], closed: &[u32], tip: u32) -> Vec<u32
         .iter()
         .copied()
         .filter(|e| !closed.contains(e))
-        .filter(|e| tip >= e.saturating_add(COINBASE_MATURITY))
+        .filter(|e| tip >= e.saturating_add(PAYOUT_DELAY))
         .collect()
 }
 
@@ -594,15 +596,16 @@ mod tests {
 
     #[test]
     fn catch_up_schedule() {
-        let pool_blocks = [EPOCH, EPOCH + 50, EPOCH + 120, EPOCH + 300];
+        let pool_blocks = [EPOCH, EPOCH + 50, EPOCH + 120, EPOCH + 245, EPOCH + 300];
         let tip = EPOCH + 250;
-        // EPOCH is closed; EPOCH+300 is not mature yet.
+        // EPOCH is closed; EPOCH+245 is inside the payout delay; EPOCH+300 is in the future.
         assert_eq!(catch_up_epochs(&pool_blocks, &[EPOCH], tip), vec![EPOCH + 50, EPOCH + 120]);
-        assert!(read_due(EPOCH, 0, EPOCH + 100));
-        assert!(!read_due(EPOCH, 0, EPOCH + 99));
-        assert!(!read_due(EPOCH, 1, EPOCH + 105));
-        assert!(read_due(EPOCH, 1, EPOCH + 106));
-        assert!(read_due(EPOCH, 4, EPOCH + 1108));
+        assert!(read_due(EPOCH, 0, EPOCH + 6));
+        assert!(!read_due(EPOCH, 0, EPOCH + 5));
+        assert!(!read_due(EPOCH, 1, EPOCH + 11));
+        assert!(read_due(EPOCH, 1, EPOCH + 12));
+        assert!(read_due(EPOCH, 4, EPOCH + 1014));
+        assert!(!read_due(EPOCH, 4, EPOCH + 1013));
         assert!(!read_due(EPOCH, 5, u32::MAX), "give up after the last retry");
     }
 
