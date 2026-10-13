@@ -1,0 +1,10 @@
+[package]
+name = "spc_ark"
+version = "0.1.0"
+edition = "2021"
+description = "Prototype of the SPc + Ark one-identity payout derivation from DESIGN.md"
+license = "MIT"
+
+[dependencies]
+bitcoin = { version = "0.32", features = ["rand"] }
+ark-lib = "0.7.1"

@@ -1,0 +1,23 @@
+# Upstream dependency pins
+
+Pin SHAs, never branches. Each row says what the pin guarantees and what is excluded. Last reviewed 2026-10-12.
+
+| Repo | Ref | Why |
+|---|---|---|
+| `stratum-mining/sv2-spec` | `47dbedd8cd5ecd6d7a2f323bccfe51873e31bef6` | PR #203 head and only commit (2026-09-10T14:37:13Z); the 0x0003 text every implementation (warioishere/stratum#1, sv2-apps#3) targets. Replaces the 'as of 2026-09-15' date pin (that date was a comment edit). Files: 09-Extensions.md, extensions/0x0003-coinbase-transaction-payouts.md (219 lines). |
+| `stratum-mining/sv2-spec` | `d8bf5b8` | Existing base pin for 05-Mining-Protocol.md, 0x0001 extensions negotiation and 07-Template-Distribution-Protocol.md (L82: TP MUST reserve 1168 + 4*coinbase_output_max_additional_size WU — the formula bitcoin_core_sv2 must be checked against). |
+| `warioishere/stratum` | `9be402341d63b674160c07e37ef9f9206f39ebcc` | PR #1 head (OPEN, 4 commits ahead / 0 behind stratum-mining/stratum main): extensions_sv2 0.3.1 with SetPayoutDistribution, DistributionId TLV (parsers_sv2), compute_payout_amounts(template_revenue, pool_weight, weights, dust_limits, fixed_amounts), and the breaking handlers_sv2 trait method handle_set_payout_distribution. MIT OR Apache-2.0. No upstream PR, no CI; parsers_sv2/handlers_sv2 stay 0.7.0 despite breaking additions. Required by sv2-apps@90b3e3d (its stratum-apps/Cargo.toml pins this by branch; Cargo.lock locks this SHA). |
+| `warioishere/sv2-apps` | `90b3e3d8aef86610fae1085d7a4e54e986a5655a` | PR #3 head (OPEN; merge-base with stratum-mining/sv2-apps = 9be9d0ff8f84fa1a88031f1be35a79b405dd1dc8, 10 ahead): the only 0x0003 JDC (jd-client), opt-in via coinbase_transaction_payouts = true per [[upstreams]]. Stacks PR #1 (36dd85c, 8e3f907) and PR #2 as cherry-pick 4e526de. Fork base for spc-jdc; carries both bug fixes. |
+| `warioishere/sv2-apps` | `ec35ac81c08cccf7dd766255bd07d62dee0fabbd` | PR #2 head (OPEN): bitcoin-core-sv2 block_reserved_weight(size) = max(1168 + 4*size, 2000) in unix_capnp/mod.rs, applied to both v30x and v31x bootstrap_template_ipc_client_from_coinbase_output_constraints. Minimum fix spc-pool needs if it does not take the whole #3 chain. Not in #3's history (there as 4e526de). |
+| `warioishere/sv2-apps` | `8e3f907944c109e8a4ab84d3a36a7267da917be3` | PR #1 head (OPEN): coinbase-only JDC fix — coinbase_outputs_for_template(&template) routes all 7 custom-job build sites (0-sat pool output → InvalidCoinbaseOutputsSum swallowed) and keeps the job token until an upstream channel exists. Included in 90b3e3d; listed so cherry-picking is possible without the 0x0003 code. |
+| `stratum-mining/sv2-apps` | `56a916ac30913958edff19bb898d59a2f61ea920 (main, 2026-10-12) and v0.8.0 = 7f49074357e54da4f5b13acfcc29dc3cbb9e541f` | EXCLUSION pins: both still reserve coinbase_weight.max(MIN_BLOCK_RESERVED_WEIGHT) (v31x mod.rs:547-549, v30x:530-532) and lack the chain-tip fix; Blitzpool pins v0.8.0 (Cargo.toml:174) and is immune only via its ceil(budget/4)+256 over-declaration. |
+| `warioishere/blitzpool-server-rust` | `b48998f40c1a9ef573ef25a5cf2d6383664fc9e8` | origin/main, release 2.4.1 (2026-10-11): the deployed 0x0003 JDS the comment's mainnet claim refers to. Reading reference for spc-jds (jdp/payout_distribution.rs validator, bridge.rs DistributionSlot grace, jdp_server.rs publisher, booking-time settle). AGPL-3.0-or-later; read, not ported. Note: rejects non-zero additional_outputs and has no F term (pre-2026-09-09 reading); always sends additional_outputs = vec![]. Frontmatter provenance pin 7815884 for the ported bp-pplns math is unchanged. |
+| `demand-open-source/share-accounting-ext` | `c661e93` | Existing pin (extension.md, crate v0.0.13); unchanged. |
+| `bitcoin/bips` | `60f5b33` | Existing pin (bip-0352.mediawiki v1.1.1, bip-0323); unchanged. |
+
+## Rules
+
+- `bitcoin_core_sv2` MUST include the `block_reserved_weight(size) = max(1168 + 4·size, 2000)` fix (`warioishere/sv2-apps` `ec35ac8`, carried as `4e526de` in PR #3) in both `spc-pool` (`[template] source = "ipc"`) and `spc-agent`. Upstream `stratum-mining/sv2-apps` `main` and `v0.8.0` are excluded until it lands.
+- `sv2-spec` PR #203 is tracked by `headRefOid`, not `updatedAt` (comments bump `updatedAt`).
+- `warioishere/blitzpool-server-rust @ b48998f` is a reading reference for the `0x0003` JDS; `7815884` remains the provenance of the ported `bp-pplns` math (see `docs/SPEC.md` §7.6).
+- If `spc-jdc` is forked from `warioishere/sv2-apps@90b3e3d`, re-pin its `stratum-core` dependency by SHA (`warioishere/stratum@9be4023`); PR #3's `Cargo.toml` pins it by branch.

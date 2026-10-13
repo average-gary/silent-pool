@@ -1,0 +1,5 @@
+target/
+.DS_Store
+# regtest bitcoind/captaind scratch datadir used by spc_ark_client e2e
+spc_ark_client/test/
+spc_ark_client/target-captaind/

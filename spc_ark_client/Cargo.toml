@@ -1,0 +1,30 @@
+[package]
+name = "spc_ark_client"
+version = "0.1.0"
+edition = "2021"
+description = "Client-side (miner wallet) logic for receiving SPc/Ark-tier payouts on a stock bark server"
+license = "MIT"
+
+# Standalone workspace: links crates from the public bark repository, pinned to
+# commit c419159, so the e2e test runs against the stock, unmodified captaind.
+[workspace]
+
+[dependencies]
+spc_ark = { path = "../spc_ark" }
+ark-lib = "0.7.1"
+bark-server-rpc = { git = "https://gitlab.com/ark-bitcoin/bark.git", rev = "c419159", package = "bark-server-rpc" }
+bitcoin = { version = "0.32.7", features = ["rand", "rand-std"] }
+anyhow = "1.0"
+chrono = "0.4"
+
+[dev-dependencies]
+ark-testing = { git = "https://gitlab.com/ark-bitcoin/bark.git", rev = "c419159", package = "ark-testing" }
+bark-wallet = { git = "https://gitlab.com/ark-bitcoin/bark.git", rev = "c419159", package = "bark-wallet", features = ["sqlite"] }
+bark-server = { git = "https://gitlab.com/ark-bitcoin/bark.git", rev = "c419159", package = "bark-server" }
+bip39 = "2.0.0"
+tokio = { version = "1.35", features = ["macros", "rt-multi-thread", "fs"] }
+bitcoincore-rpc = "0.19.0"
+
+# Make spc_ark's crates.io ark-lib 0.7.1 the same crate as the pinned bark copy.
+[patch.crates-io]
+ark-lib = { git = "https://gitlab.com/ark-bitcoin/bark.git", rev = "c419159", package = "ark-lib" }
