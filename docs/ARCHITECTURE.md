@@ -180,10 +180,10 @@ Dev/regtest MAY run all roles in one process; production splits `front`
 | Key / stream | Producer → consumer | Content |
 |---|---|---|
 | `spc:slices` | front → payout | sealed `Slice` + per-identity aggregates (`Σd`, `Σd·f`) |
-| `spc:blocks` | front → payout | `{block_hash, height, front_id, fingerprint, entries}` on accepted submit |
+| `spc:blocks` | front → payout | `{block_hash, height, front_id, fingerprint, high_water, entries}` on accepted submit |
 | `spc:stats` | front → payout/api | per-minute `{sp_id, accepted_d, rejected, hashrate_est}` — never per share |
 | `spc:arkreg` | front → payout | `{sp_id, b_scan, b_spend, ark_id, b_ark, mailbox_mode, M, D, epoch_fallback, sig}` (registration) |
-| `spc:front:events` | payout → all fronts | `ArkRegApplied{sp_id, rev}`, `LedgerApplied{block_hash, pending_deltas, provisional_paids, republish}`, `BlockFound{block_hash, height, front_id}`, `TipHeartbeat{hash, height}` |
+| `spc:front:events` | payout → all fronts | `ArkRegApplied{sp_id, rev}`, `LedgerApplied{block_hash, pending_deltas, republish}`, `BlockFound{block_hash, height, front_id, provisional_paids, high_water}`, `TipHeartbeat{hash, height}` |
 | `spc:ark:orders` | payout → ark | signed `ArkSendOrder{order_id, ark_address, sats, not_before_height, sig}` — **no identity fields** |
 | `spc:ark:receipts` | ark → payout | `ArkSendReceipt{order_id, status, vtxo_id, expiry_height}` |
 

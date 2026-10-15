@@ -35,6 +35,7 @@ U256   block_hash
 U32    height
 U8     front_id
 B032   fingerprint            // SPEC §4.7; audit/dedup handle only
+SEQ0_64K[ {U8 front_id, STR0_255 stream_id} ] high_water  // {front_id: last_slice_stream_id} (§4.3); Redis stream ids are "ms-seq" strings
 SEQ0_64K[ Entry ] entries     // the winning distribution's full entry list (SPEC §3.3 step 5)
 ```
 
@@ -68,7 +69,6 @@ U64  rev
 U256 block_hash
 U8   republish                // 0|1: force a SetPayoutDistribution republish and drop the grace slot (SPEC §3.5)
 SEQ0_64K[ { B032 sp_id, I64 pending_delta_sats } ]   pending_deltas
-SEQ0_64K[ { B032 sp_id, U64 sats } ]                 provisional_paids
 ```
 
 **0x03 — `BlockFound`**
@@ -78,6 +78,8 @@ U64  rev
 U256 block_hash
 U32  height
 U8   front_id
+SEQ0_64K[ { B032 sp_id, U64 sats } ]                 provisional_paids
+SEQ0_64K[ { U8 front_id, STR0_255 stream_id } ]      high_water   // SPEC §4.3; Redis stream ids are "ms-seq" strings
 ```
 
 **0x04 — `TipHeartbeat`**
@@ -88,8 +90,6 @@ U256 tip_hash
 U32  height
 U64  unix_ms
 ```
-
-> **Open:** MULTI-REGION §6 describes `provisional_paids` as "announced on `BlockFound`", while SPEC §5.2 lists them in `LedgerApplied`. This file follows SPEC. Resolve before multi-front work (it changes whether the paid amounts are visible between found-time and booking).
 
 ### 3.3 `spc:arkreg` entry (front → payout)
 
@@ -150,7 +150,7 @@ Transport: length-prefixed (`U32 LE`) JSON over TCP to the `payout` role's inter
   "pending_balance":   [ { "…": "rows per SPEC §5.1 pending_balance" } ],
   "ark_delivery":      [ { "…": "rows per SPEC §5.1 ark_delivery, current as of rev" } ],
   "window_tail":       [ { "…": "sealed slice aggregates for the live tail (SPEC §5.3 window_cache)" } ],
-  "type32_blobs":      [ "<share blobs for the type-32 window service, base64>" ],
+  "type32_blobs":      [ "<share blobs for the type-32 window service (SPEC §3.7), base64>" ],
   "resume_cursors":    { "spc:slices": "<stream id>", "spc:front:events": "<stream id>" }
 }
 ```

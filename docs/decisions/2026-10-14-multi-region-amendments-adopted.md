@@ -8,14 +8,18 @@ Adopt MULTI-REGION §10 deltas **1, 2, 4, 5, 9, 10 and 11** into SPEC.md and ARC
 
 1. **Repeat alarm per front** (§2.2): `ser_x(A_send)` repeat is alarmed within a front's own sequence; cross-front repeats are detected retrospectively from persisted `a_send_x`.
 2. **Per-front `distribution_id`** (§3.5): `id = front_id << 56 | local_seq`, `local_seq = max(last_local_seq + 1, unix_time_ms)`. The grace rule no longer uses `id − 1` arithmetic: the JDS accepts the immediately preceding id **from the same front on the same connection**, same height only; ids are never compared across fronts.
-3. *(Not adopted here — see below.)*
+3. **High-water vector** (§4.3/§5.1): *applied 2026-10-15, see below.*
 4. **Streams** (§3.3, §5.2, §7.4): the `spc:blocks` event carries `entries`; `spc:snapshot:<fingerprint>` and `snapshot_ttl_secs` are deleted; `spc:arkreg` and `spc:front:events` are added; `spc:dist:current` is intra-`front` state. Trim discipline: `XTRIM MINID` behind the slowest **live** reader — the payout group's ack and every front's heartbeat cursor (TTL 120 s) — never `MAXLEN`, 600 s floor, 1M-entry backstop alarm, re-bootstrap for a front behind the horizon. A found block whose event never arrives is caught by chain reconciliation and booked `pending` with an alarm.
 5. **`front` RAM** (§5.3): live slice tail, `ark_delivery` cache fed by `spc:front:events`, `provisional_paids`, bounded outbox; readiness requires bootstrap-RPC completion.
 9. **Topology** (§9): `front` is "one per region; RAM-only state — no durable state of its own" (replaces "stateless except RAM"); `front_id` lease via Redis `SET NX`.
 10. **Config** (§6.3): `[pool] front_id`, `outbox_max`, `tip_divergence_secs`; `[storage] front_cursor_heartbeat_secs`, `front_cursor_ttl_secs` (replacing `snapshot_ttl_secs`).
 11. **Monitoring** (§9): `front_id` label on `spc_a_send_repeat_total`; new outbox, stream-lag, tip-divergence, registration-lag and `spc_orphaned_settlement_total` metrics; `spc_snapshot_lookup_total` removed.
 
-**Not adopted yet (still MULTI-REGION-only; SPEC wins until applied):** delta 3 (high-water vector in `distribution_snapshot`, §4.3/§5.1), delta 6 (committed registration without `dest_id` books to `pending`, never `forfeit`; §11.1/§4.6), delta 7 (`ark` records pool outputs by outpoint; §11.3), delta 8 (type-32 window served via the bootstrap RPC; §3.7). MULTI-REGION §10 carries the status line. These need a follow-up decision before multi-front phases.
+**Deferred from this decision, applied 2026-10-15:**
+- Delta 3 - **applied 2026-10-15**: high-water vector (`high_water`) in `select_window`, builder output, `distribution_snapshot`, `spc:blocks`/`BlockFound`, settlement (SPEC §4.3, §4.7, §5.1, §5.2, §7.4).
+- Delta 6 - **applied 2026-10-15**: committed registration without `dest_id` books to `pending`, never `forfeit` (SPEC §11.1, §4.6 (f)).
+- Delta 7 - **applied 2026-10-15**: `ark` records pool outputs by `(txid, vout)` and re-checks the chain at maturity (SPEC §11.3, §11.9).
+- Delta 8 - **applied 2026-10-15**: type-32 window served from bootstrap-RPC share blobs + live `spc:slices` tail (SPEC §3.7, §5.3).
 
 ## Why
 
