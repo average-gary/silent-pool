@@ -1,6 +1,6 @@
 # Multi-Region Deployment
 
-Date: 2026-10-14 · Status: design note (reviewed). Grounds: `docs/SPEC.md` (v0.1 draft), `docs/ARCHITECTURE.md`, decision `2026-10-13-jds-in-pool-binary-jd-always-on.md` (multi-region caveat), ROADMAP Decision 6, decision `2026-10-14-multi-region-amendments-adopted.md`. The §10 deltas were adopted into SPEC/ARCHITECTURE on 2026-10-14 except 3, 6, 7 and 8 (see §10); where this file and the spec disagree, the spec wins.
+Date: 2026-10-14 · Status: design note (reviewed). Grounds: `docs/SPEC.md` (v0.1 draft), `docs/ARCHITECTURE.md`, decision `2026-10-13-jds-in-pool-binary-jd-always-on.md` (multi-region caveat), ROADMAP Decision 6, decision `2026-10-14-multi-region-amendments-adopted.md`. All §10 deltas are adopted into SPEC/ARCHITECTURE (1, 2, 4, 5 on 2026-10-14; 3, 6, 7, 8 on 2026-10-15 - see §10); where this file and the spec disagree, the spec wins.
 
 Reviewed by two independent models after drafting; the load-bearing changes from review: the pool-wide window is *designed* (§1), not assumed; block-found events carry their snapshot (§7); registrations settle to `pending`, never forfeit, on pool-side lag (§6); one broadcast stream replaces bespoke fan-out (§6, §8); ids are time-seeded and leased (§4).
 
