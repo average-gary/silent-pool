@@ -5,10 +5,14 @@ title: "Spec: silent-pool — SPc pool technical specification"
 type: plan
 format: spec
 generated: 2026-10-09
-updated: 2026-10-12
+updated: 2026-10-14
 status: current
 supersedes: none
 changelog:
+  - "2026-10-14 (c): multi-region amendments adopted (docs/decisions/2026-10-14-multi-region-amendments-adopted.md). §2.2 repeat alarm scoped per front; §3.3 the `spc:blocks` event carries `entries` (Redis snapshot and `snapshot_ttl_secs` deleted); §3.5 `distribution_id = front_id << 56 | local_seq`, `local_seq = max(last_local_seq + 1, unix_time_ms)`, and the grace rule rewritten as 'previous id from the same front on the same connection' (no `id − 1` arithmetic); §5.1 `slice_id` per front; §5.2 streams (+`spc:arkreg`, +`spc:front:events`, −`spc:snapshot:*`, `spc:dist:current` struck as intra-front) and trim discipline (XTRIM MINID behind the slowest live reader — payout group ack and front cursor heartbeats, TTL 120 s — 600 s floor, 1M-entry backstop alarm, re-bootstrap); §5.3 front RAM; §6.3 `front_id`, `outbox_max`, `tip_divergence_secs`, `front_cursor_*` (replacing `snapshot_ttl_secs`); §7.4 missing-event settlement failure model; §9 topology ('RAM-only state — no durable state of its own'), `front_id` lease, monitoring. MULTI-REGION §10 deltas 3, 6, 7, 8 are NOT yet applied to this spec (see that file)."
+  - "2026-10-14 (b): O11 resolved — JD-mode claim formula is revenue-scaled: `claim(id) = floor(owed(id) · (T_actual − F) / W)`; `pending'(id) = claim(id) − paid(id)` (docs/decisions/2026-10-14-o11-claim-formula.md). O14 resolved — default mailbox mode is `epoch_derived` (variant B); no server-side registration exists; caveats on related keys and network linkability recorded (docs/decisions/2026-10-14-mailbox-default-epoch.md). M3 resolved — order-signing key is secp256k1 BIP340 Schnorr, CSPRNG-generated, stored at `/run/secrets/spc/ark-order-key` with 0o600/0o700 perms; pubkey via `[ark] order_pubkey` config; operator-driven rotation (docs/research/output/ark-order-key-spec-recommendation.md)."
+  - "2026-10-14 (a): §11.3 'Reorg and float edge cases' added (6-block rule normative; deeper reorgs and float surplus/sizing are operator policy with defaults); §11.4 states that no server-side registration endpoint exists; docs/WIRE-FORMATS.md added (byte-level formats of the new streams, `spc:arkreg` and the bootstrap RPC) and linked from §5.2."
+  - "2026-10-13 (d): spc-jds is a module of the spc-pool binary's front role (matching the SRI pool's bundled JDS), not a separate binary; JD is always on and [jd] enabled is removed. a_send sharing becomes in-process; spc:dist:current becomes intra-front state. See docs/decisions/2026-10-13-jds-in-pool-binary-jd-always-on.md."
   - "2026-10-13 (c): payout flow per the operator decisions. One hot pool output per block, fresh P2TR from `pool_payout_descriptor` (xpub under the `ark` seed) indexed by block height; Ark-tier miners paid from the float at `confirmation_depth` = 6 (was 3; was coinbase maturity); at maturity `ark` boards only what the float needs, the rest is operator surplus with no prescribed handling. Treasury signer, watch-only `pool_payout_script` and `float_max_sats` removed. Unregistered miners below `C` are forfeited to the pool (published policy; `spc-agent` registers automatically and will not mine unregistered); `pending` now arises only from trimming and failed sends. Coinbase-as-board recorded as rejected (O17)."
   - "2026-10-13 (b): pool-side key separation (§11.3). The pool's bark wallet is a hot key in a new `ark` role on its own host, generated independently of every SPc-side key, holding a float capped at `float_max_sats` and topped up by an off-host treasury signer in round amounts decoupled from blocks. `ark` sees only signed, capped send orders carrying what the Ark server sees anyway — no `sp_id`, `P_i` or block data — so compromising it risks the float but never SPc receiver privacy, and compromising the SPc side risks attribution data but not the float beyond `max_daily_sats`. `pool_payout_script` returns to watch-only (§9)."
   - "2026-10-13: reconciled to DESIGN.md, which is authoritative for payouts wherever the two disagree. §2.3/§2.5/§11.8 adopt DESIGN's derivation (`SPc/Inputs`, `SPc/TierSpc`, `SPc/TierArk`; the tag is the domain separator; hash-to-scalar fails rather than reduces), superseding the `BIP0352/*` tag-reuse interview decision. §11.1 tier split is now coinbase-threshold (default = dust) → coinbase, below → Ark (replaces the 500 000-sat band). Ark sends happen at the found block's coinbase maturity, from a bounded float held by a separate `ark` role (see the next entry). §11.4 separates identity from delivery capabilities: `SetArkIdentity` requires a separate `B_ark`, carries a mailbox mode, and the literal-address `SetArkPayout` fallback is removed in favour of DESIGN's empty-delivery + out-of-band fetch. Pool now retains per-block Ark destinations until the Ark send (a_send is erased). Fixed: custody wording (§0), threshold/revenue `T` name clash, `k` usage, `spc-agent` in the workspace."
@@ -95,8 +99,8 @@ Out of scope for v0.1: BIP 352 labels; a Lightning/BOLT12 rail for pending credi
                                       │             ├─ channel→sp_id map                                        │
    miner's own template               │             ├─ a_send[H]  (RAM only, zeroised on advance)               │
    ┌──────────────┐  JDP (0x0003)     │             ├─ open slice, seen_shares                                   │
-   │   spc-jdc    │◀────────────────▶ spc-jds        ├─ distribution builder → coinbase outputs                  │
-   │ (sp_address) │──SV2 MP────────▶  (shares state) └─ Redis streams: spc:slices, spc:blocks, spc:stats         │
+   │   spc-jdc    │◀────────────────▶ front's spc-jds ├─ distribution builder → coinbase outputs                 │
+   │ (sp_address) │──SV2 MP────────▶  module          └─ Redis streams: spc:slices, spc:blocks, spc:stats        │
    └──────┬───────┘                                                 │                                            │
           └── TDP ─▶ miner's bitcoin-core (JD mode)                 ▼                                            │
                                                      spc-pool :: payout ──▶ Postgres (slice, snapshot, ledger)  │
@@ -109,7 +113,7 @@ Out of scope for v0.1: BIP 352 labels; a Lightning/BOLT12 rail for pending credi
 | Binary / crate | Role | Forked from |
 |---|---|---|
 | `spc-pool` | one binary, `--roles front,payout,api,ark` (Blitzpool pattern). `front`: SV2 listeners, template stream, job building, share validation, slice aggregation, block submit. `payout`: slice persistence, confirmation-gated ledger apply, Ark send orders, scrub. `api`: read-only HTTP. `ark`: the pool's bark wallet and Ark float; executes signed send orders and nothing else (§11.3) | `sv2-apps/pool-apps/pool` |
-| `spc-jds` | Job Declarator Server implementing sv2-spec PR #203 (`0x0003`), publishing `SetPayoutDistribution` per height; shares Postgres/Redis with `spc-pool` (PR #203 §10: "Pool and JDS are assumed to share state") | `sv2-apps/pool-apps/jd-server` |
+| `spc-jds` (**module of `spc-pool`'s `front` role**, not a separate binary) | Job Declarator Server implementing sv2-spec PR #203 (`0x0003`), publishing `SetPayoutDistribution` per height; JD is always on (decision 2026-10-13, matching the SRI pool's bundled JDS); PR #203 §10's "Pool and JDS are assumed to share state" is satisfied in-process | `sv2-apps` pool (JDS included) |
 | `spc-agent` | the miner side, one binary: SV1/SV2 downstream listener and SV1→SV2 translation (the **translator role**, forked from `sv2-apps/miner-apps/translator`); optional Job Declarator Client with `0x0003` that builds outputs per PR #203 §4 (the **JDC role**, forked per roadmap Phase 4); own-payout verifier (§3.6); scanner and SP-aware Ark keystore (§11.5). `sp_address` config becomes the upstream `user_identity` | `sv2-apps/miner-apps/{translator,jd-client}` |
 | `spc-crypto` | BIP 352 address parsing, `sp_id`, the SPc ECDH, the tier KDF (`t_onchain`, `t_ark`, `t_mb`), carriers, mailbox blinding, zeroising key types — every derivation in DESIGN.md / MAILBOX.md, used by pool and agent alike | new; absorbs the `spc_ark` and `spc_ark_mailbox` prototypes |
 | `spc-scan` | library + CLI: find and export SPc payouts from blocks or header+branch+coinbase triples | new |
@@ -118,7 +122,7 @@ Out of scope for v0.1: BIP 352 labels; a Lightning/BOLT12 rail for pending credi
 
 **Miner-side consolidation (2026-10-12, made canonical 2026-10-13).** SRI ships the translator and JDC as separate binaries; this project ships them as **roles of one binary, `spc-agent`**: one process, one config, one seed. Where this spec says `spc-translator` or `spc-jdc` it means `spc-agent` running in that role.
 
-**Process boundaries that matter.** Only `front` ever holds `a_send`. Only `payout` writes Postgres. `api` reads Postgres and Redis. `spc-jds` holds the per-height `a_send` for JD mode and MUST run co-located with (or be the same process as) `front` so one key per height exists pool-wide (§3.2). Only `ark` holds the `ark` seed (bark wallet and pool output keys), and `ark` sees no attribution data — only signed send orders carrying what the Ark server sees anyway (§11.3). SPc receiver privacy and Ark-tier funds are protected by disjoint secrets on disjoint hosts.
+**Process boundaries that matter.** Only `front` ever holds `a_send`; the `spc-jds` module is part of `front` (decision 2026-10-13), so JD-mode use of the key is an in-process share. Only `payout` writes Postgres. `api` reads Postgres and Redis. Only `ark` holds the `ark` seed (bark wallet and pool output keys), and `ark` sees no attribution data — only signed send orders carrying what the Ark server sees anyway (§11.3). SPc receiver privacy and Ark-tier funds are protected by disjoint secrets on disjoint hosts.
 
 ## 2. SPc cryptographic protocol (normative)
 
@@ -149,9 +153,9 @@ on SetNewPrevHash(prev_hash, H):
 
 - `a_send` MUST be generated from an OS CSPRNG. It MUST NOT be derived from any seed, xprv, descriptor, or earlier `a_send` — additive-tweak ladders (BIP 32 unhardened, `A_0 + H(·)·G`) let one secret regenerate every key and make erasure impossible ([08-16 L2](research/raw/notes/2026-08-16-ll-sv2-pool-tag-asend-carrier.md); vectors case 9).
 - `a_send` MUST exist only in process memory (`Zeroizing<[u8; 32]>`); it MUST NOT be written to disk, logs, Redis, or Postgres. `ser_x(A_send)` MAY be stored (it is public on-chain anyway).
-- One `a_send` per height **pool-wide**: `front` and `spc-jds` MUST share it (same process, or `front` publishes `a_send` to `spc-jds` over a local authenticated channel — never Redis).
-- A restart mid-height generates a new `a_send` for the same `H`. This is safe: outputs differ, both are scannable (§2.5). Reuse of one `a_send` across two heights is **not** a correctness failure (the height is in `input_hash`) but widens forward-secrecy exposure; `front` MUST alarm if `ser_x(A_send)` repeats across heights.
-- **Erasure vs deferred Ark payouts.** Ark sends happen `confirmation_depth` (6) blocks after the find, long after `a_send[H]` is erased at the next `SetNewPrevHash` (§11.3), so `front` MUST derive each Ark-capable id's Ark destination (`U_i` and its blinded mailbox id, §11.8) while `a_send[H]` is live, and put it in the distribution snapshot (§4.7). Only those public points are retained — never `ecdh_i`, `t_onchain` or `t_ark`: a stored tweak plus one leaked per-output secret (`u_i` or `p_i`) reveals the miner's base key (`b_ark` or `b_spend`).
+- One `a_send` per height per `front` process: `spc-jds` is a module of `front` (decision 2026-10-13), so the key is shared by reference and never crosses a process or machine boundary (never Redis). With one `front` per region (§9), each region has its own `a_send[H]`; that is safe — miners scan `A_send` from the coinbase carrier — and the key is RAM-only, so it adds no durable state (MULTI-REGION §3).
+- A restart mid-height generates a new `a_send` for the same `H`. This is safe: outputs differ, both are scannable (§2.5). Reuse of one `a_send` across two heights is **not** a correctness failure (the height is in `input_hash`) but widens forward-secrecy exposure; `front` MUST alarm if `ser_x(A_send)` repeats across heights within its own sequence (cross-front repeats are detected retrospectively from the persisted `a_send_x`, MULTI-REGION §3).
+- **Erasure vs deferred Ark payouts.** Ark sends happen `confirmation_depth` (6) blocks after the find, long after `a_send[H]` is erased at the next `SetNewPrevHash` (§11.3), so `front` MUST derive each Ark-capable id's Ark destination (`U_i` and its blinded mailbox id, §11.8) while `a_send[H]` is live, and put it in the distribution entries (§4.7), which travel in the `spc:blocks` event (§3.3). Only those public points are retained — never `ecdh_i`, `t_onchain` or `t_ark`: a stored tweak plus one leaked per-output secret (`u_i` or `p_i`) reveals the miner's base key (`b_ark` or `b_spend`).
 
 ### 2.3 Output derivation (pool → miner `i`, height `H`)
 
@@ -264,8 +268,8 @@ Per `NewTemplate` (and per `SetNewPrevHash`) `front`:
 1. Looks up `a_send[H]` (§2.2).
 2. Asks `spc-accounting` for `Distribution(H, T = coinbase_tx_value_remaining, A_send)` (§4.7) → ordered outputs `[pool_output, P2TR(P_i)…]`.
 3. Builds `coinbase_tx_prefix = version ‖ vin_count ‖ null_prevout ‖ scriptSig_len ‖ height_push ‖ push32(A_send)` and `coinbase_tx_suffix = sequence ‖ outputs ‖ locktime`, honouring `coinbase_output_max_additional_size` reserved from the TP (`spc-pool` sets it from the current weight budget, §4.8, Blitzpool's per-stream reservation).
-4. Freezes the distribution as a **snapshot** in Redis keyed by `fingerprint = sha256(ser32(H) ‖ ser_x(A_send) ‖ Σ ser(output_i))` with TTL `snapshot_ttl_secs` (default 1200). The fingerprint rides every job so the winning share names its payout list exactly (Blitzpool `payouts_fingerprint`).
-5. Sends `NewExtendedMiningJob` / `NewMiningJob`. Standard channels receive the merkle root only; they cannot verify payouts (§3.6).
+4. Sends `NewExtendedMiningJob` / `NewMiningJob`. Standard channels receive the merkle root only; they cannot verify payouts (§3.6).
+5. XADDs a `spc:blocks` event `{block_hash, height, front_id, fingerprint, entries}` where `entries` is the winning distribution's full entry list, which the finding front holds in RAM for the jobs it issued. Settlement reads the event payload; no Redis snapshot key. The fingerprint (sha256 of distribution) serves for deduplication/idempotency.
 
 Distribution recomputation is bounded: weights change with every share, but the output **keys** `P_i` are fixed per `(sp_id, H)`, so only amounts move. `front` rebuilds amounts on each template (every ~30 s) and never per share.
 
@@ -288,11 +292,11 @@ reply SubmitShares.Success (or ShareOk{ref_job_id, share_index} if 0x0020 is act
 **Publication.** `spc-jds` sends `SetPayoutDistribution` as the first message after negotiation and again:
 - **always** on `SetNewPrevHash` (new `H` ⇒ new `A_send`, new `P_i`), and
 - on a timer (`distribution_interval_secs`, default 60) when weights moved by more than `distribution_rebalance_bps` (default 100 = 1 %), and
-- on **ledger apply** (booking at `confirmation_depth`, §7.4): force a republish regardless of `distribution_rebalance_bps` so pending credits reach `payouts` immediately, and drop the grace slot — `distribution_id − 1` is rejected after this republish (PR #203 §10: the grace window SHOULD NOT span a settlement event; Blitzpool's `invalidate_all_distributions()` + forced publish does exactly this at booking, not at found-time). Found-time invalidation is already satisfied by the `SetNewPrevHash` bullet plus the same-height rule: every id published before the pool's own block belongs to the previous height and is rejected.
+- on **ledger apply** (booking at `confirmation_depth`, §7.4): force a republish regardless of `distribution_rebalance_bps` so pending credits reach `payouts` immediately, and drop the grace slot — the immediately preceding id FROM THE SAME FRONT on that connection is rejected after this republish (PR #203 §10: the grace window SHOULD NOT span a settlement event; Blitzpool's `invalidate_all_distributions()` + forced publish does exactly this at booking, not at found-time). Found-time invalidation is already satisfied by the `SetNewPrevHash` bullet plus the same-height rule: every id published before the pool's own block belongs to the previous height and is rejected.
 
 ```
 SetPayoutDistribution {
-  distribution_id:    U64   strictly increasing, pool-wide
+  distribution_id:    U64   strictly increasing, per front: `id = front_id << 56 | local_seq`, `local_seq = max(last_local_seq + 1, unix_time_ms)`
   pool_payout:        TxOut{ script: P2TR(pool_payout_descriptor @ H), value: weight_P }   # weight, not sats; fresh per height
   payouts:            [ TxOut{ script: OP_1 ser_x(P_i), value: weight_i } ] # one per sp_id kept by §4.8
   dust_limits:        [ 330 … ]                                             # per payouts[i]; P2TR dust
@@ -304,7 +308,7 @@ SetPayoutDistribution {
 
 **Validation (`spc-jds` and `front`).** On `DeclareMiningJob` (Full-Template) or `SetCustomMiningJob` (Coinbase-only) carrying the `distribution_id` TLV (`0x0003`/`0x01`, 8 B): recompute `pay[i] = floor(weight_i · (T − F) / W)`, prune `< dust_limits[i]`, `pay_P = T − Σ pay[i] − F`, assert output order `pool_payout, payouts…, additional_outputs, JDC 0-value outputs, TP outputs`; mismatch → `invalid-payout-distribution`. Unknown/old id → `stale-payout-distribution`.
 
-**Grace window (R4 in the roadmap).** `spc-jds` MAY accept `distribution_id − 1` **only if it was published at the same height `H`**. A declaration built for `H` and accepted at `H + 1` would pay outputs nobody can scan at `H + 1` (`input_hash` differs). Height-straddling declarations MUST be rejected with `stale-payout-distribution`. `spc-scan`'s `{H, H − 1}` tolerance is belt-and-braces for third-party pools, not a license to relax this rule.
+**Grace window (R4 in the roadmap).** `spc-jds` MAY accept the immediately preceding id FROM THE SAME FRONT on that connection **only if it was published at the same height `H` by the same front on the same connection**. A declaration built for `H` and accepted at `H + 1` would pay outputs nobody can scan at `H + 1` (`input_hash` differs). Height-straddling declarations MUST be rejected with `stale-payout-distribution`. `spc-scan`'s `{H, H − 1}` tolerance is belt-and-braces for third-party pools, not a license to relax this rule. Ids are not comparable across fronts.
 
 **Shares under JD.** Carry `job_fees` from the declared job's template value into `ShareRec`; this is where `score_f` becomes non-trivial (§4.4).
 
@@ -423,7 +427,7 @@ pay_P     = T − Σ pay(id)                              # fee + rounding + for
 
 **Invariants (proptested).** (a) `Σ pay + pay_P = T`. (b) one output per `(sp_id, H)` — `kept` is a set keyed by `sp_id`, so Blitzpool's missing duplicate-address merge ([finder-bonus code read](research/raw/repos/2026-07-27-blitzpool-finder-bonus-code-read.md) §8) cannot recur. (c) `Σ held' + Σ forfeited − Σ pending = Σ_{not kept} raw − Σ_{kept} pending`. (d) idempotent apply: re-applying a settled block changes nothing (§5.1 `ledger_history` PK). (e) an id is on exactly one rail per block: `kept`, `ark_due'`, `pending'` and `forfeited` are disjoint for that block. (f) `forfeited(id) > 0` only if `id` has no `ark_delivery` and `owed(id) < C`.
 
-**Settlement reads the mined coinbase, never the snapshot's sats.** `payout` books from the block's actual coinbase: `T_actual = Σ coinbase outputs`; `paid(id)` = value of the output whose script is `OP_1 ser_x(P_id)` from `entries` (0 if absent). Pool-template mode: `T_actual = T` and `paid(id) = pay(id)` by construction, so nothing changes. JD mode: the JDC paid `floor(owed(id) · (T_actual − F) / W)` at **its** template revenue (PR #203 §4) and may have dust-pruned an id the snapshot kept, so the mined sats differ from `entries[].sats` on every JD block whose `T_actual ≠ T`; `pending'(id)` MUST be derived from `paid(id)`, never copied from the snapshot — which claim it is derived against is O11 (§10). Blitzpool books `claim(T_actual) − paid` per address from the mined coinbase (`bp-pplns-engine` `on_block_found`, `ActualCoinbase`) for the same reason; the §11.6 miner audit closes to zero only under this rule.
+**Settlement reads the mined coinbase, never the snapshot's sats.** `payout` books from the block's actual coinbase: `T_actual = Σ coinbase outputs`; `paid(id)` = value of the output whose script is `OP_1 ser_x(P_id)` from `entries` (0 if absent). Pool-template mode: `T_actual = T` and `paid(id) = pay(id)` by construction, so nothing changes. JD mode: the JDC paid `floor(owed(id) · (T_actual − F) / W)` at **its** template revenue (PR #203 §4) and may have dust-pruned an id the snapshot kept, so the mined sats differ from `entries[].sats` on every JD block whose `T_actual ≠ T`; `pending'(id)` MUST be derived from `paid(id)`, never copied from the snapshot. The claim is `claim(id) = floor(owed(id) · (T_actual − F) / W)` (revenue-scaled; resolved 2026-10-14, `docs/decisions/2026-10-14-o11-claim-formula.md`), so `pending'(id) = claim(id) − paid(id)` keeps the ledger unsigned and matches pool-template mode's scaling. Blitzpool books `claim(T_actual) − paid` per address from the mined coinbase (`bp-pplns-engine` `on_block_found`, `ActualCoinbase`) for the same reason; the §11.6 miner audit closes to zero only under this rule.
 
 ### 4.7 Distribution builder
 
@@ -480,7 +484,7 @@ CREATE TABLE ark_epoch_mailbox (                 -- MAILBOX.md variant A only
 );
 
 CREATE TABLE slice (
-  slice_id    BIGINT PRIMARY KEY,                -- monotone, assigned by front
+  slice_id    BIGINT PRIMARY KEY,                -- `front_id << 56 | local_seq` (as distribution_id, §3.5): monotone per front, unique globally
   height      INTEGER NOT NULL,
   prev_hash   BYTEA NOT NULL,
   ref_job_id  BIGINT NOT NULL,
@@ -556,18 +560,23 @@ Nothing here is a per-share row ([share accounting & durability](research/siblin
 | Key / stream | Producer → consumer | Content |
 |---|---|---|
 | `spc:slices` (stream) | front → payout | sealed `Slice` + its per-identity aggregates |
-| `spc:blocks` (stream) | front → payout | `{block_hash, height, fingerprint}` on `SubmitSolution` accepted |
+| `spc:blocks` (stream) | front → payout | `{block_hash, height, front_id, fingerprint, entries}` on `SubmitSolution` accepted |
 | `spc:stats` (stream) | front → payout/api | per-minute `{sp_id, accepted_d, rejected, hashrate_est}` — never per share |
-| `spc:snapshot:<fingerprint>` | front → payout | `Distribution` entries, TTL `snapshot_ttl_secs` (1200) |
-| `spc:dist:current` | jds → front | current `distribution_id`, `H` (JD validation) |
+| `spc:arkreg` (stream) | front → payout | `{sp_id, b_scan, b_spend, ark_id, b_ark, mailbox_mode, M, D, epoch_fallback, sig}` (registration) |
+| `spc:front:events` (stream) | payout → all fronts | `ArkRegApplied{sp_id, rev}`, `LedgerApplied{block_hash, pending_deltas, provisional_paids, republish}`, `BlockFound{block_hash, height, front_id}`, `TipHeartbeat{hash, height}` |
+| ~~`spc:dist:current`~~ | intra-`front` state since 2026-10-13 | current `distribution_id`, `H` (JD validation); was a stream when the JDS was a separate process |
 | `spc:ark:orders` (stream) | payout → ark | signed `ArkSendOrder` (§11.3) — no identity fields. Redis ACL: `ark` may read only this stream and write only `spc:ark:receipts` |
 | `spc:ark:receipts` (stream) | ark → payout | `ArkSendReceipt` keyed by opaque `order_id` |
 
 Consumer groups give at-least-once delivery; `ledger_history`'s PK makes apply idempotent, so redelivery is harmless (Blitzpool's exactly-once-by-idempotency).
 
+**Delivery semantics.** `payout` consumes `spc:slices`, `spc:blocks`, `spc:arkreg` via consumer group (at-least-once; idempotent apply via `ledger_history` PK). Fronts live-tail `spc:slices` and `spc:front:events` via plain XREAD with RAM-only cursors re-primed at start. Trim discipline: `XTRIM MINID` behind the slowest LIVE reader — the payout consumer group's ack position AND every front's advertised cursor (each front heartbeats its cursor per stream to `spc:cursor:{stream}:{front_id}:{instance}` every `front_cursor_heartbeat_secs`, TTL `front_cursor_ttl_secs` = 120 s; a front whose key has expired is no longer live and stops holding the trim back); never `MAXLEN`. Absolute floor: never trim entries younger than 600 s. Backstop: if XLEN exceeds 1M entries, alarm. A front whose cursor fell behind the trim horizon MUST re-bootstrap via the payout bootstrap RPC.
+
+Byte-level formats of the stream payloads above, the `spc:arkreg` entry and the front bootstrap RPC are defined in [`WIRE-FORMATS.md`](WIRE-FORMATS.md); multi-region rationale in [`MULTI-REGION.md`](MULTI-REGION.md) §6.
+
 ### 5.3 `front` process memory
 
-`channels: HashMap<ChannelId, (sp_id, B_scan, B_spend)>` · `ark_delivery: HashMap<sp_id, ArkDelivery>` (loaded from §5.1, updated by §11.4) · `a_send: Option<(u32 /*H*/, Zeroizing<[u8;32]>, [u8;32] /*A_x*/)>` · `ecdh_cache: HashMap<sp_id, Zeroizing<[u8;33]>>` (cleared with `a_send` on height advance) · `open_slice: Slice` · `seen_shares: HashSet<[u8;32]>` (cleared on `SetNewPrevHash`) · `window_cache: Vec<SliceAgg>` (per-slice `Σd`, `Σd·f`, per-id maps; rebuilt from Postgres at start) · `budget: Autoscaler`.
+`channels: HashMap<ChannelId, (sp_id, B_scan, B_spend)>` · `ark_delivery: HashMap<sp_id, ArkDelivery>` (loaded from §5.1, updated by `spc:front:events`) · `a_send: Option<(u32 /*H*/, Zeroizing<[u8;32]>, [u8;32] /*A_x*/)>` · `ecdh_cache: HashMap<sp_id, Zeroizing<[u8;33]>>` (cleared with `a_send` on height advance) · `open_slice: Slice` · `seen_shares: HashSet<[u8;32]>` (cleared on `SetNewPrevHash`) · `window_cache: Vec<SliceAgg>` (live slice tail; rebuilt at start through the bootstrap RPC, which in single-site reads Postgres directly) · `budget: Autoscaler` · `provisional_paids: HashMap<sp_id, u64>` (pending deltas from `LedgerApplied` events) · `outbox: Vec<RedisEvent>` (bounded; MULTI-REGION §8a). Front readiness requires bootstrap-RPC completion.
 
 Loss on crash: the open slice (≤ `max_slice_shares` shares, typically seconds of work) and `seen_shares` (mitigated §3.4). `ponytail:` accepted for v0.1; upgrade path is a periodic open-slice checkpoint to Redis.
 
@@ -612,6 +621,9 @@ listen = "0.0.0.0:34254"
 authority_public_key = "…"      # Noise static key (SRI convention)
 pool_payout_descriptor = "tr(tpub…/0/*)"   # xpub of the ark seed's account m/86'/coin'/1' (§11.3); index = block height
 fee_bps = 100
+front_id = 0                    # 0..127, unique per front (§3.5, §9); single-site = 0
+outbox_max = 4096               # front: bounded in-RAM outbox of unpublished Redis events (~10 min of slices + block events); full ⇒ fail closed (MULTI-REGION §8a)
+tip_divergence_secs = 30        # front: alarm when its tip differs from the central TipHeartbeat for this long
 
 [template]
 source = "ipc"                   # "ipc" (bitcoin-core Cap'n Proto) | "sv2-tp"
@@ -639,8 +651,7 @@ up_debounce = 3
 down_debounce = 20
 cooldown_secs = 300
 
-[jd]
-enabled = true
+[jd]                                # JD is always on (decision 2026-10-13); no enabled flag
 distribution_interval_secs = 60
 distribution_rebalance_bps = 100
 grace_same_height_only = true    # MUST stay true (§3.5)
@@ -651,8 +662,9 @@ window_hot_blocks = 6
 
 [storage]
 postgres = "postgres://…"
-redis = "redis://…"
-snapshot_ttl_secs = 1200
+redis = "redis://…"                # TLS + per-front ACLs when fronts are remote (MULTI-REGION §6)
+front_cursor_heartbeat_secs = 30
+front_cursor_ttl_secs = 120
 ```
 
 ```toml
@@ -683,8 +695,8 @@ silent-pool/                      MIT OR Apache-2.0
   crates/spc-accounting           pure; proptest dev-dep                         (no I/O)
   crates/spc-share-ext            binary-sv2 / codec-sv2 message structs + server/verifier
   crates/spc-ext                  0x5350 delivery-capability messages (§11.4)
-  bins/spc-pool                   fork of sv2-apps pool + roles
-  bins/spc-jds                    fork of sv2-apps jd-server + 0x0003
+  bins/spc-pool                   fork of sv2-apps pool (JDS included) + roles front/payout/api/ark;
+                                  the spc-jds module (in front) implements PR #203 0x0003 — JD always on
   bins/spc-agent                  translator role (fork of sv2-apps translator) + JDC role (fork per roadmap
                                   Phase 4, 0x0003) + verifier + SP-aware bark keystore (§11.5)
   vendor/channels-sv2             patched: pool_tag: Option<Vec<u8>>
@@ -706,7 +718,7 @@ Per template: `n_kept` scalar multiplications (`ecdh_i` — `B_scan,i` is fixed,
 
 ### 7.4 Idempotency and exactly-once
 
-Block settlement runs in one Postgres transaction: `INSERT block_found … ON CONFLICT DO NOTHING` → if inserted, `INSERT ledger_history` rows (PK rejects replays) → `INSERT ark_payout` rows (`status='scheduled'`, `due_height = height + confirmation_depth`, so normally due at once) for the Ark-rail ids → `UPDATE pending_balance` → `UPDATE block_found.status`. The Ark send is a second, separately idempotent step keyed by the same `(block_hash, sp_id)` and driven by the `ark` role's receipts (§11.3). Orphan check (`confirmation_depth`) runs before the transaction; an orphaned block writes `status='orphaned'` and **no** ledger rows. A block whose snapshot was lost (TTL expired, Redis flush) is booked as `status='pending'` with `fingerprint` unresolved and alarms — a build MUST never fail over a lost snapshot (Blitzpool's vouching invariant), and the operator reconstructs from the on-chain coinbase + `slice_credit` if needed.
+Block settlement runs in one Postgres transaction: `INSERT block_found … ON CONFLICT DO NOTHING` → if inserted, `INSERT ledger_history` rows (PK rejects replays) → `INSERT ark_payout` rows (`status='scheduled'`, `due_height = height + confirmation_depth`, so normally due at once) for the Ark-rail ids → `UPDATE pending_balance` → `UPDATE block_found.status`. The Ark send is a second, separately idempotent step keyed by the same `(block_hash, sp_id)` and driven by the `ark` role's receipts (§11.3). Orphan check (`confirmation_depth`) runs before the transaction; an orphaned block writes `status='orphaned'` and **no** ledger rows. If a front cannot deliver a found block's event (crashed before XADD, outbox overflow), `payout`'s chain reconciliation sees the pool coinbase on-chain with no `block_found` row (`spc_orphaned_settlement_total{reason=missing_block_event}`, MULTI-REGION §8a), books it `status='pending'` with `fingerprint` unresolved and alarms — a build MUST never fail over a lost event (Blitzpool's vouching invariant), and the operator reconstructs from the on-chain coinbase + `slice_credit` if needed.
 
 ### 7.5 Pool-tag patch
 
@@ -736,12 +748,12 @@ The derivation vectors are DESIGN.md's: port `spc_ark/src/lib.rs::test_vector` (
 - `RequestExtensions` matrix: `{0x0001}`, `{0x0001, 0x0003}`, `{0x0001, 0x0020}`, unknown id → correct `.Success`/`.Error` lists; JDC with `0x0003` on only one connection refuses JD mode.
 - share replay (same share twice, same share on two channels), stale job after restart → rejected.
 - slice sealing on prev-hash change, fee band, `max_slice_shares`; merkle root matches an independent implementation.
-- `SetPayoutDistribution` published on height change; validation rejects mutated amounts, reordered outputs, a missing `OP_RETURN`, and a **height-straddling** declaration under the grace window; accepts `id − 1` at the same height.
+- `SetPayoutDistribution` published on height change; validation rejects mutated amounts, reordered outputs, a missing `OP_RETURN`, and a **height-straddling** declaration under the grace window; accepts the previous id from the same front on the same connection at the same height.
 - type-32: `GetWindow` for a found block returns a window whose `Σ difficulty ≥ N × D`; `GetShares` merkle paths verify; a pool build compiled with `--features cheat-slice-difficulty` is caught by the verifier within 3 windows at `4 × 8` sampling (statistical test, seed-pinned).
 
 ### 8.4 End-to-end — regtest harness (`testing/regtest-harness`, CI)
 
-bitcoin-core (IPC) + `spc-pool` + `spc-jds` + 2 × `spc-translator` + 1 × `spc-jdc` + CPU miners:
+bitcoin-core (IPC) + `spc-pool` (JDS module included) + 2 × `spc-translator` + 1 × `spc-jdc` + CPU miners:
 1. **Pool-template happy path**: three `tsp` identities mine; block found; coinbase has pool P2TR + 3 P2TR + no `OP_RETURN`; each `spc-scan find` recovers exactly its own output; each spends it with `b_spend + t`.
 2. **JD happy path**: `spc-jdc` declares; block found; coinbase has `OP_RETURN "SPc"`; JDC's own `P` present; `spc-scan` recovers via carrier 2; type-32 `GetTransactionsInJob` returns the JDC's set.
 3. **Threshold, trim and delivery**: one Ark-registered identity below `C` → `ark_payout` scheduled and paid at `H_f + 6` from the float (§11.9 covers the Ark leg); one identity below `C` with no Ark registration → `rail='forfeit'`, its sats in `pay_P`, nothing pending; `/api/pool/liability` returns to 0 after the send.
@@ -754,11 +766,11 @@ bitcoin-core (IPC) + `spc-pool` + `spc-jds` + 2 × `spc-translator` + 1 × `spc-
 
 ### 8.5 Adversarial (manual + CI where deterministic)
 
-Grinding `a_send` to collide with a known earlier payment (must be a fixed-point search — test asserts the naive solve fails); JDC distribution shopping across `id−1/id` at the same height (accepted by design, bounded by `distribution_rebalance_bps`); 10 k channels with distinct valid addresses (memory, autoscaler, `max_payout_slots` trimming order).
+Grinding `a_send` to collide with a known earlier payment (must be a fixed-point search — test asserts the naive solve fails); JDC distribution shopping across the grace id and the current id at the same height (accepted by design, bounded by `distribution_rebalance_bps`); 10 k channels with distinct valid addresses (memory, autoscaler, `max_payout_slots` trimming order).
 
 ## 9. Deployment
 
-**Topology.** One `spc-pool` binary; dev/testnet runs `--roles front,payout,api` in one process, and MAY add `ark` to it on regtest/signet only; production splits `front` (one per region, stateless except RAM) from a single `payout` (sole Postgres writer), N `api` replicas, and a single `ark` on its own host. `spc-jds` co-located with `front` (shared `a_send`, §2.2). Redis and Postgres are the only durable state of the SPc side, and **no spending key lives on it**: it holds only the xpub of `pool_payout_descriptor`. The pool has exactly one hot seed, the `ark` seed (bark wallet + pool output keychain), held only by the `ark` role on its own host with its own secret store and no access to the attribution data (§11.3). Its blast radius is the float plus whatever pool revenue the operator leaves under it; moving surplus elsewhere is operator policy and out of scope.
+**Topology.** One `spc-pool` binary; dev/testnet runs `--roles front,payout,api` in one process, and MAY add `ark` to it on regtest/signet only; production splits `front` (one per region; RAM-only state — no durable state of its own) from a single `payout` (sole Postgres writer), N `api` replicas, and a single `ark` on its own host. Each `front` claims its `front_id` at start with a Redis `SET NX` lease (heartbeat-refreshed, holding an instance UUID) and refuses to start if the lease is held — a duplicate `front_id` would silently collide `distribution_id`s and `slice_id`s (MULTI-REGION §10). The `spc-jds` module is part of `front` — JD is always on, and `a_send` is shared in-process (§2.2). Redis and Postgres are the only durable state of the SPc side, and **no spending key lives on it**: it holds only the xpub of `pool_payout_descriptor`. The pool has exactly one hot seed, the `ark` seed (bark wallet + pool output keychain), held only by the `ark` role on its own host with its own secret store and no access to the attribution data (§11.3). Its blast radius is the float plus whatever pool revenue the operator leaves under it; moving surplus elsewhere is operator policy and out of scope.
 
 **Migrations.** `sqlx migrate` at boot under `pg_advisory_lock`; every process may run them (Blitzpool pattern). Schema changes are additive until v1.0.
 
@@ -766,7 +778,7 @@ Grinding `a_send` to collide with a known earlier payment (must be a fixed-point
 
 **Rollback.** Stopping `front` stops mining. Coinbase-tier payouts are already on-chain and not at risk; pending balances and scheduled Ark payouts survive in Postgres and are paid when the pool resumes (the Ark send is idempotent per `(block_hash, sp_id)`, §7.4). Downgrading `spc-pool` across a schema version is unsupported; restore from the pre-migration dump.
 
-**Monitoring (Prometheus).** `spc_a_send_age_seconds` (alarm > 1 h — a stuck height), `spc_a_send_repeat_total` (alarm > 0), `spc_open_slice_shares`, `spc_slices_sealed_total{reason}`, `spc_distribution_slots{kept,trimmed,dust}`, `spc_budget_wu`, `spc_budget_utilisation`, `spc_snapshot_lookup_total{hit,miss}` (miss on block found = page), `spc_blocks_total{status}`, `spc_pending_liability_sats`, `spc_ark_due_sats`, `spc_ark_payouts_total{status}`, `spc_ark_overdue_total` (scheduled past `due_height + ark_retry_blocks` = page), `spc_ark_float_sats` (below `float_target_sats` = refill needed; `ark` boards at the next matured pool output), `spc_ark_surplus_sats` (matured pool revenue not boarded, for operator tooling), `spc_forfeited_sats_total`, `spc_ark_orders_rejected_total{reason}` (any `bad-signature` = page), `spc_channel_reject_total{reason}`, `spc_jd_declaration_reject_total{code}`, `spc_ext32_requests_total{msg}`.
+**Monitoring (Prometheus).** `spc_a_send_age_seconds` (alarm > 1 h — a stuck height), `spc_a_send_repeat_total{front_id}` (alarm > 0), `spc_open_slice_shares`, `spc_slices_sealed_total{reason}`, `spc_distribution_slots{kept,trimmed,dust}`, `spc_budget_wu`, `spc_budget_utilisation`, `spc_blocks_total{status}`, `spc_pending_liability_sats`, `spc_ark_due_sats`, `spc_ark_payouts_total{status}`, `spc_ark_overdue_total` (scheduled past `due_height + ark_retry_blocks` = page), `spc_ark_float_sats` (below `float_target_sats` = refill needed; `ark` boards at the next matured pool output), `spc_ark_surplus_sats` (matured pool revenue not boarded, for operator tooling), `spc_forfeited_sats_total`, `spc_ark_orders_rejected_total{reason}` (any `bad-signature` = page), `spc_channel_reject_total{reason}`, `spc_jd_declaration_reject_total{code}`, `spc_ext32_requests_total{msg}`, `spc_outbox_depth`, `spc_outbox_age_seconds`, `spc_stream_lag_seconds{stream}`, `spc_tip_divergence_seconds`, `spc_registration_lag_revs`, `spc_orphaned_settlement_total{reason}`.
 
 **Operational privacy.** Logs never contain `user_identity`, `sp_id`, `P_i`, `U_i`, mailbox ids or VTXO ids at `INFO`; `DEBUG` redacts to 8-hex-char prefixes. Postgres backups inherit the scrub policy; a backup older than `scrub_after_blocks` is itself attribution data and SHOULD be rotated on the same schedule.
 
@@ -784,10 +796,10 @@ Grinding `a_send` to collide with a known earlier payment (must be a fixed-point
 | O8 | Amount-linkability mitigation (randomised slot count, deferred payouts) | Research; see proposed inventory record in the roadmap. |
 | O9 | `demand-share-accounting-ext` porting cost on current `stratum-core` | Unknown until Phase 6; message set is small. |
 | O10 | PR #203 drift | Pinned at `47dbedd` (the PR's single commit, 2026-09-10; no spec movement as of 2026-10-12 — warioishere's 2026-10-11 comment pins warioishere/stratum#1 and sv2-apps#3 to the same commit). Residual text risk: TheBlueMatt's unanswered 2026-09-10 question on all-static payouts with only a subset paid (would relax the §7 'no partial payment of `additional_outputs`' MUST at L168) and warioishere's requested §9.3 sentence (prose only). `spc-jds`/`spc-jdc` isolate `0x0003` in one module each. |
-| O11 | JD-mode booking when the JDC's template revenue ≠ the pool's (§4.6) | `pending'(id) = claim(id) − paid(id)` needs a definition of `claim`: revenue-scaled `owed(id) · (T_actual − F) / W` keeps `pending` unsigned but scales carried balances with the winning template; fixed-sat `raw(id) · (T_actual − F) / W + pending(id)` keeps balances in sats but can go negative (signed ledger, §7.6). Decide before Phase 4; either way §11.3 Ark sends pay `ark_due'` as booked from the mined coinbase, not `owed` from the snapshot. |
+| O11 | JD-mode booking when the JDC's template revenue ≠ the pool's (§4.6) | **Resolved 2026-10-14** (`docs/decisions/2026-10-14-o11-claim-formula.md`): revenue-scaled — `claim(id) = floor(owed(id) · (T_actual − F) / W)`; `pending'(id) = claim(id) − paid(id)`. Unsigned ledger preserved; §11.3 Ark sends pay `ark_due'` as booked from the mined coinbase. |
 | O12 | Plain-SPc compatibility for the coinbase tier (DESIGN.md open question) | **Open.** Should `t_onchain` use the upstream SPc / BIP 352 tag instead of `SPc/TierSpc`, so a single-tier SPc scanner also finds coinbase outputs? Depends on the SPc BIP, which isn't final. `t_ark` and `t_mb` keep `SPc/*` tags either way. |
 | O13 | Bark integration for derived keys (DESIGN.md) | **Open.** An extra-keys source consulted by `pubkey_keypair`, `find_vtxo_keypairs`, `get_vtxo_key`, `find_signable_clause` (RESULTS.md: ~150–300 lines); upstream patch vs fork. Tweaked keys need their own key type and storage, and seed recovery must re-scan pool blocks. |
-| O14 | Default mailbox mode (DESIGN.md per-block vs static; MAILBOX.md variants) | **Open.** v0.1 default is `static` (DESIGN.md). MAILBOX.md recommends `epoch_derived` (variant B) in practice: no registration, server can't link epochs, at the cost of related mailbox keys. Decide after the bark patch (O13) exists, since only an SP-aware wallet can read rotated mailboxes. |
+| O14 | Default mailbox mode (DESIGN.md per-block vs static; MAILBOX.md variants) | **Resolved 2026-10-14** (`docs/decisions/2026-10-14-mailbox-default-epoch.md`): default = `epoch_derived` (variant B). No per-epoch registration window; no fallback-to-static. Variant A (`epoch_registered`) remains an option for independent per-epoch keys. |
 | O15 | Wallet UX across tiers (DESIGN.md) | **Open.** One balance spanning pending, scheduled Ark payouts, immature coinbase outputs and VTXOs; `GET /api/sp/me` (§6.1) supplies the pool-side half. |
 | O16 | Light-client scanning of both tiers (DESIGN.md) | **Open.** The ≈500 B/block proof (§2.5) covers the coinbase tier and the pool-block list; the Ark tier then needs only mailbox reads, but a light client still needs a trusted source of pool-block heights. |
 | O17 | Coinbase output as the board itself (`board_funding_address` in the coinbase) | **Rejected (2026-10-13).** The pool does not run the Ark server, so the design MUST work with a stock third-party `captaind`, and stock mainnet `captaind` forces `require_board_funding_tx`, whose cosign check rejects a coinbase's null-prevout input. Recipients would also have no unilateral exit until coinbase maturity. The pool output is paid normally and boarded when mature (§11.3). |
@@ -859,11 +871,23 @@ Concretely:
   ArkSendReceipt { order_id, status: sent | failed, vtxo_id, expiry_height }   # spc:ark:receipts, ark → payout
   ```
   No `sp_id`, `B_scan`, `B_spend`, `P_i`, block hash or snapshot data crosses into `ark`, so a compromised `ark` host learns exactly the Ark server's view (destination keys, amounts, timing) and nothing about who was paid in any coinbase. `payout` alone maps `order_id → (block_hash, sp_id)`.
-- **Orders are authenticated and capped.** `payout` signs each order with a dedicated order-signing key (not the `ark` seed, not any SPc key); `ark` rejects unsigned orders, orders whose `ark_address` names a server other than the pinned `ark_id`, and anything over `max_order_sats` (default `C`: an Ark-tier payout is always below the coinbase threshold). An operator MAY add a `max_daily_sats` cap.
+- **Orders are authenticated and capped.** `payout` signs each order with a dedicated order-signing key — secp256k1 BIP340 Schnorr, CSPRNG-generated (independent of the `ark` seed and all SPc keys; resolved 2026-10-14, `docs/research/output/ark-order-key-spec-recommendation.md`), stored hex-encoded 32-byte secret at `order_key_path` (default `/run/secrets/spc/ark-order-key`) with `0o600` file / `0o700` dir perms (bark `fs_perms` convention), x-only pubkey distributed to the `ark` role via config (`[ark] order_pubkey`), validated at startup; the signed message is defined in `WIRE-FORMATS.md` §3.4. Rotation is operator-driven: generate new keypair on `payout` host, update `order_pubkey` on `ark` host, restart `ark`; in-flight orders on rotation follow the existing retry/`failed_to_pending` logic (orders are short-lived, max `retry_blocks` = 6). `ark` rejects unsigned orders, orders whose `ark_address` names a server other than the pinned `ark_id`, and anything over `max_order_sats` (default `C`: an Ark-tier payout is always below the coinbase threshold). An operator MAY add a `max_daily_sats` cap.
 
 **Server choice.** `[ark] server = "https://…"` MUST be a server **not operated by the pool**. Arkoor security is "at least one party (sender or Ark server) honest" (Second docs); a pool that is both removes the assumption ([critiques](research/raw/articles/2026-10-10-ark-oor-trust-payer-equals-asp-critiques.md) §1). Default: Second's mainnet server (`ark_id` pinned in config). A self-hosted `captaind` MAY be used **only on regtest/signet for tests**. RESULTS.md: a stock server and a stock pool-side bark wallet pay derived destinations unmodified.
 
 **Paying (`H_f + 6`).** Ark-tier payouts for a block found at `H_f` are sent at `due_height = H_f + confirmation_depth` (6), from the float — the pool's own working capital, so miners do not wait for coinbase maturity. Pay only from VTXOs with `expiry_height − tip ≥ min_remaining_blocks` (default **3 024 ≈ 21 d**) so recipients inherit a near-full window; keep `arkoor_depth` under the server's `max_vtxo_exit_depth` by refreshing on depth, not only on expiry. A reorg deeper than `confirmation_depth` after the send is the pool's loss: arkoors are not reversible, which is the reason to wait 6 blocks rather than pay at find time.
+
+**Reorg and float edge cases.**
+
+_Normative (MUST):_
+- `ArkSendOrder.not_before_height = H_f + confirmation_depth` (6), and `ark` MUST NOT send before its own chain tip reaches it.
+- `payout` MUST re-verify that `H_f` is still on the active chain immediately before emitting each order (the send loop below; `ark` never sees the block hash).
+- A reorg that removes `H_f` before depth 6 cancels the `ark_payout` row and reverses its ledger entries (send loop); the block no longer exists, so nothing is owed, pending or forfeited.
+
+_Operator policy (defaults given; deployments MAY change them):_
+- Reorgs deeper than 6 that touch already-sent orders are the pool's loss (above). Default: alarm on any invalidation deeper than `confirmation_depth` that affects an `ark_payout` row with `status='sent'`, then manual review.
+- Where surplus above `float_target_sats` goes (cold storage, another setup, left in place) is operator-configured; the spec prescribes nothing beyond "never board more than the float needs" (Refilling, below).
+- `float_target_sats` sizing default: cover the Ark-tier payouts expected over roughly 144 blocks of the pool's own finds (one maturity period plus margin).
 
 **Refilling (`H_f + 100`).** When a pool output matures, `ark` boards **only what the float needs**: it builds a PSBT spending the pool output (key path) to `board_funding_address(..)` for `float_target_sats − float_balance` (if positive), with the remainder to an on-chain address `ark` controls, and registers it with `board_psbt` (`bark/src/board.rs:153-240`: the board output may sit at any index alongside other outputs). Everything not boarded is **operator surplus**. This spec does not define what the operator does with it — sweep to cold storage, pay it out over Ark to another setup, or leave it — only that `ark` never boards more than the float needs. Size `float_target_sats` to cover Ark-tier payouts for the blocks the pool expects to find in one maturity period (≈ 1 block's worth for a 1 % pool, ≈ 10 for a 10 % pool), plus margin.
 
@@ -875,7 +899,7 @@ Concretely:
 
 ### 11.4 Delivery capabilities — the SPc extension
 
-**Identity vs delivery capability (§0).** `user_identity` is the SP address and nothing else; it alone keys the account. What the pool additionally needs to *deliver* on the Ark tier is a **delivery capability**: static, private, per-`sp_id` registration data, sent once per Ark server over SV2 and never published. The per-block destination is always **derived** (§2.3, §11.8); the miner never sends a per-payout address, and there is **no literal-address registration** — a static reused Ark address is the ArkPool model DESIGN.md calls strictly worse, so silent-pool does not offer it.
+**Identity vs delivery capability (§0).** `user_identity` is the SP address and nothing else; it alone keys the account. What the pool additionally needs to *deliver* on the Ark tier is a **delivery capability**: static, private, per-`sp_id` registration data, sent once per Ark server over SV2 and never published. "Registration" here is pool↔miner bookkeeping only — **there is no server-side registration endpoint**; the Ark server only unblinds. The per-block destination is always **derived** (§2.3, §11.8); the miner never sends a per-payout address, and there is **no literal-address registration** — a static reused Ark address is the ArkPool model DESIGN.md calls strictly worse, so silent-pool does not offer it.
 
 Project-defined SV2 extension negotiated via `0x0001` (identifier `0x5350` — "SP"; renumber if assigned):
 
@@ -895,7 +919,7 @@ One binary (§1). Holds **`b_scan`** (to verify its own `P` in every job/distrib
 
 - **Keys (DESIGN.md / MAILBOX.md paths, one master seed).** `b_spend` `m/352'/0'/0'/0'/0` (cold), `b_scan` `m/352'/0'/0'/1'/0`, `b_ark` `m/352'/0'/0'/2'/0`, per-epoch `m_i` `m/352'/0'/0'/3'/i'` (`epoch_registered`; the agent may hold only the `…/3'` account xpriv). The agent's bark wallet — whose `m/350'/1'` key is the static mailbox `M` — runs on a **child seed** of the master (BIP 85-style), not on the master itself, so that holding the bark wallet does not mean holding `b_spend`. One backup (the master) recovers both tiers. The `spc_ark_client` prototype derives everything from one seed for test convenience; production MUST split as above.
 - **Hot/cold posture (DESIGN.md).** Scanning and recognising `U_i` watch-only need only `b_scan` and `B_ark`; signing for a VTXO (status attestation, refresh, spend, exit) needs `u_i = b_ark + t_ark`. `b_ark` MAY be held hot by the agent (default: refresh is unattended) or by an external signer, which MUST then come online inside the refresh window. `b_ark` is never `b_spend`, and `b_spend` is never used on the Ark tier.
-- **Register (mandatory).** On connect, once per Ark server: `SetArkIdentity` (§11.4) with `D = b_ark·S_mb` computed by whoever holds `b_ark`. In `epoch_registered` mode, also `RegisterEpochMailboxes` per MAILBOX.md — with sends at `H_f + 6`, after-the-find registration has only ~6 blocks, so pre-register a height window instead. The agent MUST NOT submit shares until `SetArkIdentity.Success`: unregistered earnings below `C` are forfeited (§11.1), so a registration failure is a hard stop, not a warning.
+- **Register (mandatory).** On connect, once per Ark server: `SetArkIdentity` (§11.4) with `D = b_ark·S_mb` computed by whoever holds `b_ark`. In `epoch_registered` mode, also `RegisterEpochMailboxes` per MAILBOX.md — with sends at `H_f + 6`, after-the-find registration has only ~6 blocks, so pre-register a height window instead. (Default mode is `epoch_derived`, which needs no per-epoch registration; resolved 2026-10-14.) The agent MUST NOT submit shares until `SetArkIdentity.Success`: unregistered earnings below `C` are forfeited (§11.1), so a registration failure is a hard stop, not a warning.
 - **Receive.** For each pool block found while scanning (§2.5): insert `U_i → u_i` (or `U_i` watch-only) into the SP-aware keystore (§11.8 item 2), then fetch per mailbox mode — `static`: bark's normal sync of `M`; `epoch_*`: MAILBOX.md §3 on-demand reads of `M_i` at `H_f + 6 + [0, 6, 36, 144, 1008]`, closing the epoch when the VTXO for `U_i` arrives or an SPc output for that block is found; `none`: `ArkPayoutNotice` / API `vtxo_id` → `GetVtxosByIds` → `import_vtxos`. Validate each VTXO (ARK #2) and record it against the notice.
 - **Refresh.** Auto-refresh at `vtxo_refresh_expiry_threshold` (bark default 144 blocks before expiry, inside the free window). Optional `refresh_on_receive_above_sats`: refresh immediately (`refresh/counterparty`) for payouts above a size the miner cares about, shedding the sender+server trust early at 0.2–0.5 %.
 - **Dormancy.** The agent runs while the miner mines; a miner that stops for > 28 days with unrefreshed VTXOs is swept (ToS: "no obligation to return"). The agent MUST warn at shutdown if unrefreshed VTXOs exist or Ark payouts are still scheduled, and SHOULD offer `--offboard-on-exit <address>` (cooperative on-chain payment of the whole Ark balance, one tx) for anyone going dark.
@@ -932,12 +956,12 @@ Both fail on a digest of 0 or `≥ n` (§2.3). The miner recomputes `ecdh_i` for
 
 | `mailbox_mode` | Pool computes per payout | Wallet reads | Server can link a miner's payouts? |
 |---|---|---|---|
-| `static` (v0.1 default, DESIGN.md) | `blinded = M + D + t_ark·S_mb` | `M` (bark's normal sync) | yes, all of them, via `M` |
-| `epoch_derived` (MAILBOX.md variant B) | `M_i = M + t_mb·G`; `blinded = M_i + D + t_ark·S_mb` | `M_i` with `m_i = m + t_mb`, on demand | no (only within one block); `m_i` are related keys — privacy-only exposure |
+| `static` (DESIGN.md) | `blinded = M + D + t_ark·S_mb` | `M` (bark's normal sync) | yes, all of them, via `M` |
+| `epoch_derived` (v0.1 default; resolved 2026-10-14, MAILBOX.md variant B) | `M_i = M + t_mb·G`; `blinded = M_i + D + t_ark·S_mb` | `M_i` with `m_i = m + t_mb`, on demand | no (only within one block); `m_i` are related keys — privacy-only exposure (see caveat below) |
 | `epoch_registered` (MAILBOX.md variant A) | registered `M_i`; `blinded = M_i + D + t_ark·S_mb`; if `M_i` missing at send: `static` or hold, per `epoch_fallback` | `M_i` from `m/352'/0'/0'/3'/i'`, on demand | no; independent per-epoch keys |
 | `none` (DESIGN.md "Fallback") | address with an **empty delivery list** (valid per `check_delivery`) | nothing; fetch by `vtxo_id` and `import_vtxos` | not by mailbox |
 
-The address is `ark::Address::builder().server_pubkey(..).pubkey_policy(U_i).delivery(ServerMailbox { blinded })` (`spc_ark::build_bark_address`); `BlindedMailboxIdentifier::from_pubkey(U)` alone is a dead letter (DESIGN.md (b)). Which mode should be the default is O14.
+The address is `ark::Address::builder().server_pubkey(..).pubkey_policy(U_i).delivery(ServerMailbox { blinded })` (`spc_ark::build_bark_address`); `BlindedMailboxIdentifier::from_pubkey(U)` alone is a dead letter (DESIGN.md (b)). Default is `epoch_derived` (resolved 2026-10-14, `docs/decisions/2026-10-14-mailbox-default-epoch.md`). **Caveats on `epoch_derived`:** (a) mailbox keys are additive tweaks of static `m` — anyone holding BOTH static `m` and `b_scan` can derive all `m_i`; this is privacy-only exposure (VTXO spending needs `u_i = b_ark + t_ark_i`, which stays independent); (b) reads of `M_i`, `M_j` from one IP/connection are linkable at the network level — use a new gRPC connection per epoch, Tor stream isolation where possible (MAILBOX.md §4).
 
 **The receiving wallet needs an SP-aware keystore** (DESIGN.md "Recommended approach" 2). Stock bark resolves keys only via `m/350'/0'/idx` and drops a VTXO to `U_i` as "not owned by this wallet" (`find_signable_clause`, and `import_vtxos` → `KeyNotFound`) — confirmed against a stock server in RESULTS.md. `spc-agent`'s embedded wallet consults an extra-keys source holding `U_i → u_i` for each scanned pool block; signing is already abstracted over a plain `Keypair`. Patch vs fork is O13.
 
@@ -960,8 +984,9 @@ ark_id = "…"                              # first 4 bytes of SHA256(server pub
 float_target_sats = 0                     # REQUIRED: board up to this at each matured pool output; ≈ Ark-tier sats of the blocks expected in 100
 max_order_sats = 0                        # 0 = coinbase_threshold_sats (an Ark payout is always < C)
 max_daily_sats = 0                        # optional extra cap; 0 = off
-order_pubkey = "…"                        # ark side: verifies payout's order signatures
-order_key_path = "/run/secrets/spc/ark-order-key"   # payout side: order-signing key; not the ark seed, not any SPc key
+order_pubkey = "…"                        # ark side: BIP340 x-only pubkey (64 hex chars), verifies payout's order signatures; REQUIRED
+order_key_path = "/run/secrets/spc/ark-order-key"   # payout side: order-signing key (secp256k1 BIP340, CSPRNG-generated,
+                                          # independent of ark seed and all SPc keys); file 0o600, dir 0o700 (bark fs_perms)
 seed_path = "/run/secrets/ark/seed"       # ark's own secret store; MUST NOT be shared with SPc-side secrets
 pool_output_account = "m/86'/1'/1'"       # pool output keychain under the ark seed (coin type per network); its xpub is [pool] pool_payout_descriptor
 min_remaining_blocks = 3024               # pay only from VTXOs with ≥ 21 d left
@@ -971,7 +996,7 @@ server_is_self = false                    # true only on regtest/signet
 # spc-agent.toml additions
 [ark]
 enabled = true
-mailbox_mode = "static"                   # "static" | "epoch_derived" | "epoch_registered" | "none"
+mailbox_mode = "epoch_derived"            # "epoch_derived" (default) | "static" | "epoch_registered" | "none"
 epoch_fallback = "static"                 # epoch_registered only: "static" | "hold"
 signer = "local"                          # "local" (b_ark hot) | "external" (watch-only U, §11.5)
 refresh_on_receive_above_sats = 0         # 0 = never; else refresh/counterparty immediately

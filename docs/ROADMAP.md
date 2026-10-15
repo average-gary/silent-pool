@@ -5,9 +5,12 @@ title: "Plan: SPc Pool — a net-new PPLNS-JD (SLICE) pool paying silent-payment
 type: plan
 format: roadmap
 generated: 2026-10-09
-updated: 2026-10-12
+updated: 2026-10-14
 status: current
 changelog:
+  - "2026-10-14 (b): Phases 3–8 gain SPEC-keyed acceptance checklists (review M6); Phase 3 snapshot-freeze task replaced by the `spc:blocks` event carrying `entries` and the Phase 8 snapshot hit/miss metric by outbox/stream-lag metrics (multi-region amendments adopted, docs/decisions/2026-10-14-multi-region-amendments-adopted.md); upstream pins are reference/starting points, not gates (R3, Phase 4 dependencies; docs/decisions/2026-10-14-upstream-own-suite.md)."
+  - "2026-10-14: O11 resolved (revenue-scaled claim formula; Phase 4 entry criterion met). O14 resolved (default mailbox = epoch-derived variant B). M3 resolved (order-signing key spec). See docs/decisions/2026-10-14-o11-claim-formula.md, docs/decisions/2026-10-14-mailbox-default-epoch.md, docs/research/output/ark-order-key-spec-recommendation.md."
+  - "2026-10-13 (b): spc-jds is a module of the spc-pool binary's front role (matching the SRI pool's bundled JDS), not a separate binary; JD is always on. Phase 4 and the workspace/harness rosters updated. See docs/decisions/2026-10-13-jds-in-pool-binary-jd-always-on.md."
   - "2026-10-13: aligned with SPEC/DESIGN as revised 2026-10-13. Sub-threshold earnings now paid over Ark (new Phase 7; old Phase 7 is Phase 8): one hot P2TR pool output per block, height-indexed; registered sub-threshold miners paid from the pool's Ark float at 6 confirmations; matured pool output boarded only to refill the float; unregistered miners below the coinbase threshold forfeit to the pool. Hash tags settled as `SPc/*` (DESIGN.md); scriptSig carrier is x-only push32 (63 B budget); `spc-translator` + `spc-jdc` are roles of one `spc-agent`; confirmation depth 6. Must work with a stock third-party Ark server."
   - "2026-10-12 (b): license MIT OR Apache-2.0; Decision 5 / Phase 0 / R13 updated — Blitzpool math re-implemented, not ported."
   - "2026-10-12: PR #203 impact pass — Phase 4 spc-jdc becomes a fork of warioishere/sv2-apps@90b3e3d (+ stratum@9be4023); pins by SHA; R3 reworded; OP_RETURN cost 46 B/184 WU; watch record keyed on headRefOid."
@@ -94,7 +97,7 @@ The one unifying trick that keeps this tractable: in pool-template mode every sh
 ### Decision 6: Blitzpool-style role split from day one (interview choice)
 
 **Context**: user chose `front`/`payout`/`api` roles over Redis streams + Postgres over a single binary. Blitzpool's `front` holds stratum listeners, TDP streams, job building, block submit; `payout` applies the ledger after confirmations; exactly-once over Redis streams.
-**Decision**: three roles in **one binary** selected by `--roles` (Blitzpool's pattern), plus a fourth, `ark`, added 2026-10-13 for the Ark tier: it alone holds the pool's hot Ark seed, on its own host, and sees only signed send orders with no identity data (spec §11.3). `front` is the only process that ever holds `a_send`. Share → slice aggregation happens in `front` RAM; a slice is published to the `slices` Redis stream when sealed (prev-hash change or `fees ≥ f+δ` or `max_shares`), and `payout` persists it. Block-found events carry the frozen distribution snapshot keyed by `(height, template fingerprint)`.
+**Decision**: three roles in **one binary** selected by `--roles` (Blitzpool's pattern), plus a fourth, `ark`, added 2026-10-13 for the Ark tier: it alone holds the pool's hot Ark seed, on its own host, and sees only signed send orders with no identity data (spec §11.3). `front` is the only process that ever holds `a_send`. Share → slice aggregation happens in `front` RAM; a slice is published to the `slices` Redis stream when sealed (prev-hash change or `fees ≥ f+δ` or `max_shares`), and `payout` persists it. Block-found events carry the winning distribution's `entries` (SPEC §3.3; no Redis snapshot, amended 2026-10-14).
 **Consequences**: a `front` restart loses the open (unsealed) slice — bounded loss of at most one slice of shares. Acceptable for v1; flag with a `ponytail:` note (upgrade: periodic open-slice checkpoint). `seen_shares` replay set also lives in `front`; SRI loses it on restart too — mitigate by rejecting shares for jobs issued before process start.
 
 ### Decision 7: Serve the share-accounting extension (type 32) in v1, pool-defined where the spec is unfinished (interview choice)
@@ -117,7 +120,7 @@ The one unifying trick that keeps this tractable: in pool-template mode every sh
 - [ ] `docs/spc-spec.md`: diff against BIP 352 Sender/Receiver sections. Hash tags are settled by DESIGN.md (`SPc/Inputs`, `SPc/TierSpc`, `SPc/TierArk`, `SPc/Mailbox`; spec §2.3) and `A_send` is x-only + even-Y on both carriers (spec §2.2). Still to write down: `input_hash = tagged_hash(ser32(height) ‖ ser(A_send))`; `k = 0` always (one output per `(sp_id, height)`); both carriers and the scanner precedence; `H` and `H−1` scan tolerance.
 - [ ] Decide amendment-vs-new-BIP posture (optout's question) — recommend **new informational BIP referencing 352**, since the eligibility gate at `bip-0352:193` is explicitly violated.
 - [x] License decision: **MIT OR Apache-2.0** (2026-10-12) — matches every dependency; Blitzpool math re-implemented, not ported.
-- [ ] Cargo workspace (spec §7.1): `spc-crypto` (absorbing the `spc_ark` / `spc_ark_mailbox` prototypes), `spc-scan`, `spc-accounting`, `spc-share-ext`, `spc-ext`, `spc-pool`, `spc-jds`, `spc-agent`. Pin `stratum-core`/`sv2-apps` commits in `UPSTREAM_DEPS.md` (Blitzpool's practice).
+- [ ] Cargo workspace (spec §7.1): `spc-crypto` (absorbing the `spc_ark` / `spc_ark_mailbox` prototypes), `spc-scan`, `spc-accounting`, `spc-share-ext`, `spc-ext`, `spc-pool` (incl. the `spc-jds` module), `spc-agent`. Pin `stratum-core`/`sv2-apps` commits in `UPSTREAM_DEPS.md` (Blitzpool's practice).
 - [ ] Testnet choice: testnet4 or signet (`tsp` HRP); regtest harness via `sv2-tp` or bitcoin-core IPC.
 **Dependencies**: none.
 **Validation**: spec reviewed by one SP implementer; `sp-coinbase-vectors` cases 1–12 re-run green against the frozen tags.
@@ -153,26 +156,56 @@ The one unifying trick that keeps this tractable: in pool-template mode every sh
 - [ ] Fork `sv2-apps/pool-apps/pool`. Channel open: parse `user_identity` → fail-closed per Decision 1; attach `sp_id` to the channel.
 - [ ] Template path: on `SetNewPrevHash` generate `a_send` (CSPRNG, zeroise on advance); on each `NewTemplate` build the distribution for `(height, a_send, T)` and the coinbase `prefix ‖ push32(ser_x(A_send)) ‖ extranonce ‖ suffix`, with the pool output at `pool_payout_descriptor @ height` (spec §11.3). Patch `pool_tag_string: String → Vec<u8>` in the vendored `channels-sv2` `JobFactory` (or carry the push in `coinbase_tx_prefix` directly).
 - [ ] Share path: validate (existing SRI), dedup (`seen_shares`), append `ShareRec` to the open slice; vardiff unchanged.
-- [ ] Snapshot freeze: on each template, write the `Distribution` to Redis keyed by payout-list fingerprint (Blitzpool `payouts_fingerprint` pattern) with TTL; on block found, the fingerprint rides the event to `payout`.
-- [ ] Redis streams: `slices`, `blocks_found`, `shares_stats` (aggregated per `sp_id` per minute, never per share).
+- [ ] Found-block event: `front` keeps the current `Distribution` entries in RAM per issued job; on `SubmitSolution` accepted it XADDs `spc:blocks {block_hash, height, front_id, fingerprint, entries}` (SPEC §3.3; the fingerprint is the Blitzpool `payouts_fingerprint` audit handle, nothing is keyed on it). No Redis snapshot key, no TTL.
+- [ ] Redis streams (SPEC §5.2): `spc:slices`, `spc:blocks`, `spc:stats` (aggregated per `sp_id` per minute, never per share); multi-front work adds `spc:arkreg` and `spc:front:events` with the trim discipline (byte formats: `docs/WIRE-FORMATS.md`).
 - [ ] `payout` role: persist slices; on `blocks_found`, wait `confirmation_depth` (6), discard orphans, apply ledger idempotently (`ledger_history UNIQUE(block_hash, sp_id)`), book pending deltas, then **scrub** the `sp_id → P_i` mapping after `scrub_after_blocks` (policy, default 100).
 - [ ] `api` role: `/api/sp/:sp_id/…` requires a signed challenge from `b_scan` (otherwise the API is an attribution oracle); public endpoints are pool-wide only.
 - [ ] Postgres migrations at boot (sqlx, advisory-locked).
 **Dependencies**: Phases 1–2.
-**Validation**: regtest e2e: 3 translators with distinct `tsp` addresses → pool → `generatetoaddress` race → block with 3 miner outputs + pool output; each `spc-scan` finds exactly its own; orphan test discards; restart mid-height produces a new `A_send` and still-scannable outputs; invalid `user_identity` is rejected at channel open (never defaulted).
+**Validation**:
+- validates: regtest e2e with 3 translators with distinct `tsp` addresses → block with 3 miner outputs + pool output
+- validates: each `spc-scan` finds exactly its own output
+- validates: orphan test discards correctly
+- validates: restart mid-height produces new `A_send` with still-scannable outputs
+- validates: invalid `user_identity` rejected at channel open (no silent default)
+**Acceptance (keyed to SPEC)**:
+- [ ] §3.1: every row of the channel-open table (`sp`, `tsp`, bare `bc1q`, descriptor, `sri/solo/…`, wrong HRP, empty, 63-char-truncated, two addresses on one connection) yields exactly its table outcome; parsing is fail-closed and **no coinbase is built for a rejected channel** (§8.3).
+- [ ] §2.2: `a_send[H]` exists only in `front` RAM, is zeroised on height advance, and appears in no log, Redis key or Postgres row; a restart mid-height yields a new, scannable `a_send`.
+- [ ] §3.3 / §5.2: `spc:blocks` carries `entries`; no `spc:snapshot:*` key or `snapshot_ttl_secs` exists; `payout` settles from the event payload alone.
+- [ ] §4.6 / §7.4: re-delivering a block event changes nothing (`ledger_history` PK); an orphaned block writes `status='orphaned'` and no ledger rows; `payout` down then up settles from the stream; a block with no event is caught by chain reconciliation and booked `pending` with an alarm.
+- [ ] §5.2: trim discipline — a front cursor behind the group's ack holds back `XTRIM MINID`; expiry of its heartbeat key (120 s) releases it; nothing younger than 600 s is trimmed; a front behind the trim horizon re-bootstraps.
+- [ ] §4.6 invariants (a)–(f), §4.5 worked-example fixture and sorted-determinism proptests (§8.2) green.
+- [ ] §6.1: `/api/sp/:sp_id/…` rejects requests without a valid `b_scan` challenge signature.
+- [ ] §8.4 steps 1, 3 (forfeit leg stubbed until Phase 7), 4, 6, 8 green.
 **Wiki grounding**: [08-16 lessons](research/raw/notes/2026-08-16-ll-sv2-pool-tag-asend-carrier.md) L4–L6 (budget, `Vec<u8>`, prefix placement); [coinbase address rotation](research/wiki/concepts/coinbase-address-rotation.md) (take the `SharedLock` plumbing, not `XpubDerivator`); [xpub spec rev. 5](research/output/plan-xpub-miner-identity-spec-2026-07-29.md) (fail-closed; per-connection payout slot).
 
-### Phase 4: Job Declaration mode — `spc-jds` + pool-side PR #203 + `spc-jdc` (≈ 4 weeks)
-**Goal**: a miner running `spc-jdc` with its own template gets the same payout outputs, with `A_send` in `OP_RETURN`.
+### Phase 4: Job Declaration mode — `spc-jds` module (in `front`) + pool-side PR #203 + `spc-jdc` (≈ 4 weeks)
+**Goal**: a miner running `spc-jdc` with its own template gets the same payout outputs, with `A_send` in `OP_RETURN`. Per the 2026-10-13 decision, the JDS is a module of the `spc-pool` binary's `front` role (as in the SRI pool) and JD is always on — no separate binary, no enable flag.
+**Entry criteria**: O11 claim formula decided (2026-10-14: revenue-scaled; `docs/decisions/2026-10-14-o11-claim-formula.md`).
 **Tasks**:
-- [ ] `spc-jds` (fork `jd-server`): negotiate `0x0003`; on `SetNewPrevHash` compute per-height `a_send`, publish `SetPayoutDistribution{distribution_id, pool_payout(weight_P), payouts[i] = P2TR(P_i) with amount = weight[i], dust_limits[i] = 330, additional_outputs = [OP_RETURN "SPc" A_send (0 sats)]}`; re-publish on a timer when weights move materially (§3.1.1), **always** on height change.
+- [ ] `spc-jds` module in `front`: negotiate `0x0003`; on `SetNewPrevHash` use the in-process per-height `a_send`, publish `SetPayoutDistribution{distribution_id, pool_payout(weight_P), payouts[i] = P2TR(P_i) with amount = weight[i], dust_limits[i] = 330, additional_outputs = [OP_RETURN "SPc" A_send (0 sats)]}`; re-publish on a timer when weights move materially (§3.1.1), **always** on height change.
 - [ ] Settlement invalidation (§10): on block found, invalidate all other `distribution_id`s and publish fresh.
 - [ ] Validation (§7.1): recompute `pay[i]` from `(distribution, T)` and compare to the declared coinbase; `invalid-payout-distribution` / `stale-payout-distribution` error codes. **Grace window: never across a height change** (R4).
 - [ ] Pool MP side: accept the `distribution_id` TLV on `SetCustomMiningJob`; shares under JD jobs carry the JDC's job fees into the slice (`score_f` now non-trivial).
 - [ ] `spc-jdc`: fork `warioishere/sv2-apps` @ `90b3e3d` (PR #3, `coinbase_transaction_payouts = true`; stacked on #1's coinbase-only chain-tip fix and #2's `block_reserved_weight` fix; needs `warioishere/stratum` @ `9be4023` for `extensions_sv2`/`parsers_sv2::DistributionId` — its `Cargo.toml` pins that by branch, re-pin by SHA; MIT OR Apache-2.0). It already does `0x0003` on both connections, empty `AllocateMiningJobToken.Success.coinbase_tx_outputs`, deferred `CoinbaseOutputConstraints`, §4 outputs in u128, the TLV, and verbatim `additional_outputs` (0-value `OP_RETURN` unit-tested). Deltas: `sp_address` config → upstream `user_identity`; §3.6 own-payout check from the distribution's `OP_RETURN`; **refuse** JD mode (spec §3.2) instead of the fork's base-protocol continuation when the JDS declines or is silent 10 s; in Full-Template mode rebuild the stored future-template job whenever the applied distribution changes (hook `on_payout_distribution`/`apply_pending_payout_distribution`) and at `SetNewPrevHash`, instead of re-sending the stored `DeclareMiningJob` with its old `distribution_id` (`template_message_handler.rs:489-507`). The first declaration of a height still races the pool's `SetPayoutDistribution`; R4 remains the JDS's rule to enforce and `stale-payout-distribution` on a non-latest id is already non-fatal in the fork.
 - [ ] Both JD modes (Full-Template and Coinbase-only) exercised.
-**Dependencies**: Phase 3 (shares/slices/ledger); PR #203 text @ `47dbedd` (its single commit, 2026-09-10; the commit warioishere/stratum#1 and sv2-apps#3 implement) pinned in `docs/`; `warioishere/stratum @ 9be4023` and `warioishere/sv2-apps @ 90b3e3d` pinned in `UPSTREAM_DEPS.md` until merged upstream (spec §7.1).
-**Validation**: regtest: JDC-built block pays per distribution; a JDC that mutates amounts is rejected; a declaration straddling a height change is rejected (not grace-accepted); `spc-scan` finds outputs via the `OP_RETURN` carrier; type-32 `GetTransactionsInJob` returns the JDC's tx set.
+**Dependencies**: Phase 3 (shares/slices/ledger); spec text per PR #203 frozen at 47dbedd is what we implement; `warioishere/stratum @ 9be4023` and `warioishere/sv2-apps @ 90b3e3d` are SHA-pinned reference points. Upstream drift handled in-tree per decision 2026-10-14-upstream-own-suite.md.
+**Validation**:
+- validates: JDC-built block pays per distribution
+- validates: JDC that mutates amounts is rejected
+- validates: declaration straddling height change rejected (no grace-acceptance)
+- validates: `spc-scan` finds outputs via `OP_RETURN` carrier
+- validates: type-32 `GetTransactionsInJob` returns JDC's tx set
+**Acceptance (keyed to SPEC)**:
+- [ ] §3.5 publication: `SetPayoutDistribution` is sent first after negotiation, on every `SetNewPrevHash`, on the timer when weights move > `distribution_rebalance_bps`, and forced on ledger apply (grace slot dropped).
+- [ ] §3.5 validation matrix: mutated amounts, reordered outputs, missing `OP_RETURN` → `invalid-payout-distribution`; unknown/old id → `stale-payout-distribution`; a height-straddling declaration is rejected; the previous id from the same front on the same connection at the same height is accepted; ids from different fronts are never compared.
+- [ ] §3.5 `distribution_id = front_id << 56 | local_seq`: strictly increasing per front, including across a restart (`local_seq` seeded from wall-clock).
+- [ ] §2.4.2 / §2.5: `spc-scan` recovers the JDC-built block's outputs via the `OP_RETURN` carrier.
+- [ ] §4.6 (O11): a JD block with `T_actual ≠ T` and a dust-pruned id books `pending'(id) = claim(id) − paid(id) ≥ 0` from the mined coinbase, and the §11.6 audit closes to zero.
+- [ ] §3.2 / §3.6: `spc-jdc` refuses JD mode when `0x0003` is negotiated on only one connection or the JDS is silent for 10 s.
+- [ ] §3.7 / §8.4 step 2: type-32 `GetTransactionsInJob` returns the JDC's tx set.
+- [ ] §8.5: `a_send` grinding test (naive solve fails); distribution shopping across the same-height grace id bounded by `distribution_rebalance_bps`.
+- [ ] §7.1: every `UPSTREAM_DEPS.md` pin passes the "Verification" section's checks in CI.
 **Wiki grounding**: [08-24 lessons](research/raw/notes/2026-08-24-ll-jd-coinbase-control-amount-linkability.md) L3–L5, L7; [PPLNS-JD § Non-custodial payouts under JD](research/wiki/concepts/pplns-jd.md); PR #203 §§3–10 (gap research).
 
 ### Phase 5: `spc-translator` hardening + miner UX (≈ 2 weeks)
@@ -182,7 +215,12 @@ The one unifying trick that keeps this tractable: in pool-template mode every sh
 - [ ] Startup self-check: open channel, confirm the pool echoes the SPc capability (an `extension 0x0003` or a pool-advertised SPc flag); abort loudly otherwise — don't let a user mine to a non-SPc pool thinking they're private.
 - [ ] Wallet guidance doc: which SP wallets can **spend** found outputs (needs `b_spend` + `t_0` import), and that none **detect** them yet (Anzus) — `spc-scan` fills the gap.
 **Dependencies**: Phase 3.
-**Validation**: a stock SV1 CPU miner (`cpuminer`) with a 63-char-truncated username → translator → pool → payout to the configured `tsp` address.
+**Validation**:
+- validates: stock SV1 CPU miner (`cpuminer`) with 63-char-truncated username → translator → pool → payout to configured `tsp` address
+**Acceptance (keyed to SPEC)**:
+- [ ] §3.1 (client side): `sp_address` is validated at startup against the network HRP; a bare address or wrong-HRP address makes `spc-translator` refuse to start (§8.4 step 6).
+- [ ] §2.4.1: `fits_script_sig_budget` fails loudly at channel setup when the extranonce does not fit.
+- [ ] §3.6: `require_own_payout = warn | refuse` honoured; startup capability self-check aborts against a non-SPc pool.
 **Wiki grounding**: [xpub identity](research/wiki/concepts/xpub-payout-identity.md) § field widths; sv2-apps translator config (gap research).
 
 ### Phase 6: Share-accounting extension (type 32) server + client (≈ 3 weeks)
@@ -193,7 +231,14 @@ The one unifying trick that keeps this tractable: in pool-template mode every sh
 - [ ] Client verifier in `spc-translator`/`spc-jdc`: sample `s` slices × `m` shares; PoW; merkle inclusion; `Σ d ≤ slice.difficulty`; `fees ≤ slice.fees + δ`; report.
 - [ ] `docs/share-accounting-ext-deltas.md`: every divergence from `extension.md` v0.0.13.
 **Dependencies**: Phases 2–4.
-**Validation**: a pool build that under-reports one slice's difficulty is caught by the verifier in ≤ 3 windows with `s = 4, m = 8`; a pool that mis-states `fees` under JD is caught.
+**Validation**:
+- validates: pool under-reporting slice difficulty caught by verifier in ≤ 3 windows with `s = 4, m = 8`
+- validates: pool mis-stating `fees` under JD is caught
+**Acceptance (keyed to SPEC)**:
+- [ ] §3.7: `GetWindow` for a found block returns a window with `Σ difficulty ≥ N × D`; `GetShares` merkle paths verify; leaves and responses carry no `sp_id`.
+- [ ] §8.3: the `--features cheat-slice-difficulty` build is caught within 3 windows at `4 × 8` sampling (seed-pinned statistical test).
+- [ ] §11.6: the agent's audit closes to zero across both tiers once Phase 7 lands.
+- [ ] `docs/share-accounting-ext-deltas.md` lists every divergence from `extension.md` v0.0.13.
 **Wiki grounding**: [SV2 Share Accounting Extension](research/wiki/concepts/sv2-share-accounting-ext.md); `~/repos/share-accounting-ext/extension.md`.
 
 ### Phase 7: Ark tier — `ark` role, SPc extension, SP-aware agent wallet (≈ 4 weeks, estimate)
@@ -204,15 +249,32 @@ The one unifying trick that keeps this tractable: in pool-template mode every sh
 - [ ] `spc-ext` (`0x5350`): `SetArkIdentity` (signed by `b_scan`), `RegisterEpochMailboxes`, `ArkPayoutNotice` (spec §11.4).
 - [ ] `spc-agent`: mandatory registration before submitting shares; SP-aware bark keystore (extra-keys source for `pubkey_keypair` / `find_vtxo_keypairs` / `get_vtxo_key` / `find_signable_clause`, RESULTS.md ~150–300 lines; patch vs fork is spec O13); mailbox reads per mode (MAILBOX.md, `PAYOUT_DELAY = 6`); refresh and offboard-on-exit.
 **Dependencies**: Phases 1–3; `spc_ark`, `spc_ark_mailbox`, `spc_ark_client` prototypes (frozen vectors).
-**Validation**: spec §11.9 integration test on regtest with stock `captaind` in the third-party role.
+**Validation**:
+- validates: spec §11.9 integration test on regtest with stock `captaind` in third-party role
+**Acceptance (keyed to SPEC)**:
+- [ ] §11.9 unit: the `SetArkIdentity` matrix (bad/foreign signature, `B_ark = B_spend`, invalid points, wrong `ark_id`, unknown mode, `none` with `M`/`D`, `static` without) returns the exact error codes and derives nothing for a rejected registration.
+- [ ] §4.6 (a)–(f) hold with the tier enabled, and per settled block `pay_P = fee_P + rounding + Σ ark_due' + Σ forfeited + Δpending` (§11.9 conservation identity).
+- [ ] §11.3 schema test: a captured `spc:ark:orders` stream carries no `sp_id`, `B_scan`, `B_spend`, `P_i` or block hash; unsigned, wrong-`ark_id` and over-`max_order_sats` orders are rejected and nothing is sent; `ark` has no Postgres or identity-stream access (Redis ACL).
+- [ ] §11.3 order key: BIP340 key generated from the CSPRNG, file `0o600`/dir `0o700`, `order_pubkey` validated at `ark` startup, rotation procedure exercised.
+- [ ] §11.3 reorg and failure: a reorg of `H_f` before `due_height` cancels its Ark payouts and reverses their ledger entries; a killed Ark server → retries → `failed_to_pending` after `retry_blocks`, never forfeit.
+- [ ] §11.3 refill: at `H_f + 100` only `float_target_sats − float_balance` is boarded; at target nothing is boarded.
+- [ ] §11.1 / §11.8: an unregistered below-`C` miner is booked `forfeit`; registered miners in `epoch_derived` (default), `static` and `none` modes receive exactly one VTXO at `H_f + 6` and nothing earlier.
+- [ ] §11.5: `spc-agent` submits no shares until `SetArkIdentity.Success`; `--offboard-on-exit` produces one on-chain tx.
+- [ ] §11.9 negative and separation tests (self-hosted `captaind` on mainnet, xprv/hardened/multipath descriptor, same-process `ark`) refuse to start.
 
 ### Phase 8: Regtest e2e, ops, and public testnet (≈ 2 weeks)
 **Tasks**:
-- [ ] `spc-regtest-harness`: bitcoin-core (IPC/TDP) + `spc-pool` + `spc-jds` + `spc-translator` + `spc-jdc` + 3 synthetic miners; CI job.
-- [ ] Metrics: slices/min, open-slice shares, distribution entries, trimmed sats, `a_send` age, snapshot hit/miss on block found (a build must never fail over a lost snapshot — Blitzpool's vouching invariant).
+- [ ] `spc-regtest-harness`: bitcoin-core (IPC/TDP) + `spc-pool` (JDS module included) + `spc-translator` + `spc-jdc` + 3 synthetic miners; CI job.
+- [ ] Metrics: slices/min, open-slice shares, distribution entries, trimmed sats, `a_send` age, outbox depth/age, per-stream lag, `spc_orphaned_settlement_total` (a build must never fail over a lost block event — Blitzpool's vouching invariant; SPEC §7.4, §9).
 - [ ] Capacity alert before anyone is trimmed (Blitzpool pattern).
 - [ ] Testnet deployment with `tsp` addresses; publish `spc-scan` so external SP implementers can verify blocks.
-**Validation**: 24 h testnet soak; at least one found block whose outputs are independently recovered by a third party running `spc-scan`.
+**Validation**:
+- validates: 24 h testnet soak
+- validates: at least one found block whose outputs independently recovered by third party running `spc-scan`
+**Acceptance (keyed to SPEC)**:
+- [ ] §8.4 steps 1–9 run green in CI on the regtest harness.
+- [ ] §9 monitoring: every metric listed there is exported, including `spc_a_send_repeat_total{front_id}`, `spc_outbox_depth`, `spc_stream_lag_seconds{stream}`, `spc_ark_overdue_total`, `spc_orphaned_settlement_total`; the `spc:*` stream 1M-entry backstop alarm fires in a test (§5.2).
+- [ ] §11.6: a third party reconciles one found block to zero from the type-32 window and the coinbase alone.
 
 **Total**: ≈ 23 weeks single-developer, ≈ 12–14 with two. Phases 1–3 (≈ 7 weeks) are the minimum that demonstrates SPc end-to-end on regtest; Phase 7 adds the Ark tier; everything else is the interview's scope additions.
 
@@ -222,7 +284,7 @@ The one unifying trick that keeps this tractable: in pool-template mode every sh
 |---|------|--------|------------|
 | R1 | **Amount linkability**: a stable hashrate share is a stable `amount_i / T` across blocks, so miners are fingerprintable without any address repeating — the ceiling on what SPc buys | [Coinbase Amount Linkability](research/wiki/concepts/coinbase-amount-linkability.md); [08-24 L6](research/raw/notes/2026-08-24-ll-jd-coinbase-control-amount-linkability.md) | State it in the spec and README. v2 candidates: randomised slot count, deferred/batched pending payouts — out of v1 scope. |
 | R2 | scriptSig budget is 63 B for the full extranonce, 62 B past height 16,777,215; merged-mining tags would contend | Seldenthuis, [t/2833](research/raw/articles/2026-10-09-delving-silent-payments-coinbase-thread.md); [08-16 L4](research/raw/notes/2026-08-16-ll-sv2-pool-tag-asend-carrier.md) | Allocate 16 B extranonce (4–8× headroom); `fits_script_sig_budget` fails loudly at channel setup; track BIP 323. |
-| R3 | PR #203 is unmerged (text frozen at `47dbedd` since 2026-09-10, no maintainer freeze; one SHA-pinned JDC exists — warioishere/stratum `9be4023` + sv2-apps `90b3e3d`, run on mainnet against Blitzpool's JDS per the author, F = 0 and height-agnostic grace, so none of our §2.4.2/§3.5 deltas were exercised); JD mode may need rework if the open 'paid subset of static payouts' question relaxes the §7 MUST | gap research; PR #203 comment 6109310390 | Pin the spec text in-repo by SHA; isolate `0x0003` handling behind one module; expect one rebase. |
+| R3 | PR #203 is unmerged (text frozen at `47dbedd` since 2026-09-10, no maintainer freeze; one SHA-pinned JDC exists — warioishere/stratum `9be4023` + sv2-apps `90b3e3d`, run on mainnet against Blitzpool's JDS per the author, F = 0 and height-agnostic grace, so none of our §2.4.2/§3.5 deltas were exercised). JD mode rests on our own implementation; spec text per PR #203 frozen at 47dbedd is normative. Upstream drift handled in-tree per decision 2026-10-14-upstream-own-suite.md. | gap research; PR #203 comment 6109310390 | Pin the spec text in-repo by SHA; isolate `0x0003` handling behind one module; deviations handled in-tree. |
 | R4 | **Grace-window height mismatch**: a declaration built under distribution `k−1` at height `H` accepted at `H+1` pays outputs derived for `H`; scanners at `H+1` miss them | [08-24 L6](research/raw/notes/2026-08-24-ll-jd-coinbase-control-amount-linkability.md) | JDS never grace-accepts across a prev-hash change; `spc-scan` tries `H` and `H−1` as belt-and-braces. |
 | R5 | JD §9.2 leak: every JDC learns payout scripts + weights of top miners, plus unfound-block snapshots and the sub-dust set | PR #203 §9.2; [08-24 L5](research/raw/notes/2026-08-24-ll-jd-coinbase-control-amount-linkability.md) | Scripts are one-time `P_i` (no identity); weights are already derivable from chain amounts; cap payout slots; document residue. |
 | R6 | `a_send` reused across heights after restart/failover → forward-secrecy blast radius grows (correctness is saved by the height nonce) | [08-24 L1](research/raw/notes/2026-08-24-ll-jd-coinbase-control-amount-linkability.md); [08-16 L3](research/raw/notes/2026-08-16-ll-sv2-pool-tag-asend-carrier.md) | `a_send` is never persisted; generated fresh per process per height; alert if the carrier key repeats across two heights. |

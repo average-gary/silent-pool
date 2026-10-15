@@ -136,6 +136,8 @@ reveals `m`. Mailbox keys only grant read access and VTXOs still need `u_i`,
 so the exposure is privacy only. **Recommendation:** prefer variant B in
 practice because it needs no registration window or fallback. Keep the
 hardened `3'/i'` scheme where independent per-epoch keys matter.
+Default for v0.1: variant B (epoch-derived) — decided 2026-10-14,
+`docs/decisions/2026-10-14-mailbox-default-epoch.md`.
 
 Rejected: `M_i = U_i`. Authorizing reads would then need a signature from
 `u_i`, which is a spending key that should stay cold.

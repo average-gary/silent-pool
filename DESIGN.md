@@ -218,7 +218,7 @@ discovery").
 - Bark integration for scanned keys (a keystore hook so that `pubkey_keypair`
   can return `b_ark + t_ark`); upstream patch vs. fork.
 - Per-block vs. static mailbox id (trade-off between server linkability and
-  polling cost).
+  polling cost). (resolved 2026-10-14, see `docs/decisions/2026-10-14-mailbox-default-epoch.md` — default is epoch-derived variant B)
 - Wallet UX for tier migration: miner sees a single balance spanning pending
   off-chain accrual, immature coinbase outputs, and VTXOs.
 - Light-client story for scanning both tiers without a full node.
